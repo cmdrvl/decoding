@@ -357,7 +357,7 @@ The gold set grows. Every production run is an opportunity to discover new edge 
 | 2 | **Convergence tracker** | ~300 | Track independent source count per bucket, compute convergence state, report marginal value of next source | Synthetic multi-source scenarios |
 | 3 | **Cascade policy engine** | ~500 | Priority-ordered decision tree driven by JSON policy file. Mode-specific cascade rules. | Hand-written gold cases, determinism tests |
 | 4 | **Constraint propagation** | ~300 | Verify rule propagation (Mode 1), structural constraint propagation (Mode 2) | Known propagation scenarios |
-| 5 | **Derivation graph** | ~200 | Template derivation declarations, effective vote weight adjustment | Known derivation scenarios, "confident wrongness" prevention |
+| 5 | **Derivation graph + clone detection** | ~300 | Template derivation declarations, effective vote weight adjustment, code similarity clustering for COBOL copy-paste programs. Two programs with the same DATA DIVISION and 85% identical PROCEDURE DIVISION vote as one source, not two. Prevents inflated convergence from cloned logic. | Known derivation scenarios, "confident wrongness" prevention, synthetic clone clusters |
 | 6 | **Gold set regression harness** | ~100 | Replay all gold cases, green/red gate on every decode change | Must pass before any decode or policy change ships |
 | 7 | **Convergence dashboard** | ~300 | Report bucket states, marginal value estimates, human review queue | Integration tests with multi-source scenarios |
 
