@@ -112,6 +112,31 @@ Rules:
 - identical claims must replay identically
 - unknown `subject.kind` or `property_type` values are refusal conditions in
   Phase 1
+- malformed JSON, malformed `claim_id`, or property/value shape mismatches are
+  refusal conditions in Phase 1
+
+### Refusal boundary
+
+Phase 1 must keep a hard boundary between invalid input and unresolved meaning.
+
+Refusal (`exit 2`) conditions:
+
+- malformed JSONL
+- missing required fields
+- malformed `claim_id`
+- unknown `subject.kind`
+- unknown `property_type`
+- `value` shape that does not match the frozen property contract
+- unknown policy keys
+
+Escalation conditions:
+
+- compatible contract, but conflicting propositions
+- compatible contract, but insufficient corroboration
+- compatible contract, but no declared policy path to resolution
+
+If the decoder accepts a claim into a bucket, that claim has already passed the
+Phase 1 validity gate.
 
 ---
 
@@ -189,6 +214,15 @@ EMPTY -> SINGLE_SOURCE -> CONVERGING -> CONVERGED
 | `CONVERGED` | enough evidence to publish canonical entry |
 | `CONFLICTED` | incompatible claims exist |
 | `ESCALATED` | conflict or ambiguity requires human review |
+
+`bucket_id` must be computed from canonical JSON of the logical bucket key:
+
+- base bucket object:
+  `{"subject":{"kind":"...","id":"..."},"property_type":"..."}`
+- edge bucket object:
+  `{"subject":{"kind":"...","id":"..."},"property_type":"...","value":{"kind":"...","id":"..."}}`
+
+The hash format is always `sha256:<64 lowercase hex>`.
 
 ---
 
@@ -350,6 +384,7 @@ Required shape:
   "property_type": "semantic_label",
   "reason": "conflicted",
   "claim_ids": ["sha256:...", "sha256:..."],
+  "candidate_values": ["Adjusted EBITDA rule family", "EBITDA exception class"],
   "recommended_action": "review",
   "summary": "two incompatible semantic interpretations remain"
 }
@@ -364,8 +399,9 @@ Frozen field contract:
 | `subject.kind` | enum | same frozen vocabulary as input |
 | `subject.id` | string | same normalized ID as input |
 | `property_type` | enum | same frozen vocabulary as input |
-| `reason` | enum | `conflicted`, `missing_corroboration`, `invalid_value`, `unknown_property_type`, `unknown_subject_kind` |
+| `reason` | enum | `conflicted`, `missing_corroboration`, `no_resolution_path` |
 | `claim_ids` | array | sorted claim IDs in the bucket |
+| `candidate_values` | array | normalized candidate values or edge targets under review |
 | `recommended_action` | enum | `review`, `scan_more`, `fix_scanner`, `fix_policy` |
 | `summary` | string | short human-readable one-line explanation |
 
@@ -515,7 +551,7 @@ to code without reopening the model:
    - normalized value helpers
 
 2. **Bucket store**
-   - deterministic grouping by `(subject.kind, subject.id, property_type)`
+   - deterministic grouping by the logical bucket key
    - claim ordering by canonical claim ID
    - source-artifact distinct counting
 
@@ -547,6 +583,102 @@ to code without reopening the model:
 
 Phase 1 coding should start only after the comparator registry and minimal
 policy contract are frozen.
+
+---
+
+## Implementation notes
+
+### Implementation scope
+
+| Component | Source | LOC estimate |
+|-----------|--------|-------------|
+| CLI surface | `clap` derive + custom validation | ~200-400 |
+| Claim contract parser / normalizer | Custom | ~500-800 |
+| Bucket key / hashing layer | Custom | ~200-400 |
+| Bucket store and ordering | Custom | ~400-700 |
+| Comparator registry | Custom | ~300-600 |
+| Resolver + state machine | Custom | ~500-900 |
+| Policy loader / validator | Custom | ~200-400 |
+| Output writers (`canon_entry`, `escalation`, `convergence`) | Custom | ~300-600 |
+| Fixture harness and snapshots | Custom | ~300-600 |
+| **Total** | | **~2.9-5.4K lines of Rust** |
+
+This is intentionally small. If the Phase 1 implementation starts pulling in a
+database, graph runtime, or model workflow substrate, the plan has drifted.
+
+### Swarm-safe module map
+
+The implementation should converge on a file layout that keeps contract,
+resolution, and reporting work from colliding constantly.
+
+Recommended module ownership:
+
+| Path | Responsibility |
+|------|----------------|
+| `src/cli.rs` | Clap surface, exit-code mapping, file loading orchestration |
+| `src/contracts/{mod,claim,canon_entry,escalation,convergence,policy}.rs` | Wire contracts, serde schemas, contract validation |
+| `src/normalize.rs` | Canonical JSON, string normalization, sorted-set helpers, hash helpers |
+| `src/bucket.rs` | Logical bucket keys, edge/base bucket construction, bucket grouping |
+| `src/compare.rs` | Property-aware comparator registry |
+| `src/resolve.rs` | State machine and resolution decisions |
+| `src/report.rs` | Convergence summary generation |
+| `tests/contracts/*.rs` | Parse/refusal and schema tests |
+| `tests/fixtures/*.rs` | Mixed-source archaeology fixtures |
+| `tests/snapshots/*.rs` | Explanation and output snapshots |
+
+The exact filenames can vary slightly, but v0 should preserve this separation.
+
+### Candidate crates
+
+| Need | Crate | Notes |
+|------|-------|-------|
+| CLI | `clap` | derive-based CLI surface |
+| JSON parsing | `serde`, `serde_json` | contracts, policy, outputs |
+| Content hashing | `sha2` | `claim_id` and `bucket_id` helpers |
+| Deterministic map ordering | `indexmap` or `BTreeMap` | preserve stable rendering where needed |
+| Snapshot assertions | `insta` | explanation/output snapshots |
+
+Avoid pulling in graph databases, workflow engines, or heavy rule frameworks in
+Phase 1. The resolver is small enough to keep explicit.
+
+### Implementation standards
+
+Phase 1 should follow the same standards as the other spine primitives:
+
+- `#![forbid(unsafe_code)]`
+- clap derive CLI
+- MIT license
+- CI gate of `fmt -> clippy -> test`
+- cross-platform release builds
+- deterministic artifact rendering for every output format
+
+### Release infra
+
+Minimum release/CI surface for v0:
+
+1. GitHub Actions or equivalent running:
+   - `cargo fmt --check`
+   - `cargo clippy --all-targets -- -D warnings`
+   - `cargo test`
+2. One fixture corpus checked into the repo and run on every PR.
+3. Snapshot tests for structured explanation payloads.
+4. A release workflow that builds tagged binaries for the supported platforms.
+5. A smoke test that runs the CLI on fixture claims and verifies stable output
+   artifacts.
+
+Phase 1 does not need perf benchmarking infrastructure, but it does need
+deterministic release confidence.
+
+### Release process
+
+Before each release:
+
+1. Run the quality gate locally.
+2. Verify fixture outputs and explanation snapshots intentionally changed, if
+   at all.
+3. Bump the crate version semver appropriately.
+4. Ensure `Cargo.lock` is current.
+5. Tag and publish only after the fixture corpus passes cleanly on CI.
 
 ---
 
@@ -601,3 +733,56 @@ fed from `crucible scan` into `decoding` and produce:
 - clear next-scan guidance
 
 That is enough to start the manual replacement loop.
+
+---
+
+## Initial success criteria
+
+`decoding` is credible for Phase 1 when all of the following are true:
+
+- The same input claim set and policy file always produce byte-for-byte stable
+  `canon_entry.v0`, `escalation.v0`, and `convergence.v0` outputs.
+- Malformed or unknown claims fail fast at the refusal boundary instead of
+  leaking into escalation handling.
+- Edge properties such as `depends_on` and `reads` retain independent targets
+  without collapsing into one bucket.
+- One real archaeology slice produces a useful canonical map plus a bounded
+  review queue.
+- The fixture corpus can catch regressions in bucket identity, comparator
+  behavior, and explanation payloads.
+
+## Test coverage
+
+The test strategy should be implemented as named suites, not informal good
+intentions.
+
+- **Contract suite:** parse valid `claim.v0`, reject malformed or unknown
+  contract shapes, validate policy loading and refusal behavior.
+- **Bucket suite:** verify base vs edge bucket identity, bucket hashing, claim
+  ordering, and source-artifact distinct counting.
+- **Comparator suite:** one focused corpus per property type, including
+  compatibility and incompatibility cases.
+- **Resolver suite:** state-transition fixtures for `single_source`,
+  `converging`, `converged`, `conflicted`, and `escalated`.
+- **Snapshot suite:** stable snapshots for `canon_entry.v0`,
+  `escalation.v0`, and `convergence.v0`.
+- **Real-slice suite:** one bounded legacy archaeology fixture representative
+  of the first Hyperion-style slice.
+
+Coverage goals for v0:
+
+- every frozen `property_type` exercised by at least one comparator test
+- every refusal condition exercised by at least one contract test
+- every `resolution_kind` exercised by at least one resolver fixture
+- every `escalation.reason` exercised by at least one resolver fixture
+
+## Go / no-go checkpoints
+
+- If edge properties are still collapsing under the bucket store, stop and fix
+  bucket identity before adding more vocabulary.
+- If malformed claims can reach the resolver, stop and fix the refusal boundary
+  before adding more policy behavior.
+- If explanation payloads are unstable across identical reruns, stop and fix
+  normalization before widening the fixture corpus.
+- If the first real slice produces an unbounded escalation queue, stop and
+  tighten the vocabulary/policy surface before adding more property types.
