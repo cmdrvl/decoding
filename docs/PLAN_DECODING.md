@@ -273,8 +273,8 @@ Sources scanned: 5 of 7 known applications
 
 1. Extractors emit `claim.v0` events as JSONL files.
 2. Each claim is content-addressed (hash of normalized payload) and tagged with derivation metadata (independent vs derived source).
-3. `decoding` canonicalizes entity references using `canon` registries; unresolved IDs become provisional hypotheses with alternatives tracked.
-4. Claims are inserted into their `(entity, period, field, def)` bucket. Provisional entities bucket by best-guess canonical ID with alternatives linked.
+3. `decoding` canonicalizes entity references using promoted `canon` registries. `canon org` may build those registries offline, but it does not sit in the hot decode path.
+4. If lookup succeeds, claims bucket under the resolved canonical ID. If lookup does not succeed, claims bucket under a decoder-local unresolved entity handle linked to the source hints and registry snapshot. The decoder does not mint provisional canonical IDs, and it does not treat `canon org` escrow IDs as canonical identity.
 5. After each insertion, the decoder attempts to solve the bucket. Resolution follows the per-field cascade policy: temporal precedence -> source hierarchy -> anchor agreement -> extractor track record -> majority -> tolerance -> hold hypothesis -> escalate.
 6. Resolved buckets emit canonical `mutation.v0` events (plus a decode explanation graph: winning claims, losing claims, policy rule fired, alternatives preserved).
 7. Late claims for already-resolved buckets are checked for consistency. Contradictions from independent sources re-open the bucket and re-solve. Redundant confirmations increase confidence without changing state.
@@ -322,6 +322,94 @@ Counterparties ->  canon registries (known entities with known aliases)
 Each level resolves from the level below it. Properties anchor the base. Everything cascades upward deterministically. No probabilistic matching infrastructure needed for v0.
 
 Mode 2 doesn't need entity resolution — tables and columns are already identified by DDL. The challenge is semantic resolution (what does it *mean*), not identity resolution (what *is* it).
+
+---
+
+## Contract with `canon org`
+
+`decoding` and `canon org` are adjacent but not interchangeable.
+
+`canon org` is an **identity compiler** for organization-like entities. It takes
+normalized observations, incumbent alias state, trusted anchors, and escrow
+memory, then emits one of four outcomes for each solved component:
+
+- inherit an existing canonical ID
+- promote a new canonical ID
+- abstain with pending escrow
+- abstain with contradiction / cannot-link evidence
+
+`decoding` is a **claim resolver**. It takes already-emitted claims and decides
+what canonical value to publish for a bucket, whether to hold alternatives as
+hypotheses, or whether to escalate.
+
+That yields a strict contract:
+
+1. **`canon org` owns org identity formation.** Alias expansion, anchor-based
+   inheritance, escrow carry-forward, and safe promotion into flat registries
+   belong to `canon org`, not `decoding`.
+2. **`decoding` owns claim/value convergence.** Once an entity is resolved to a
+   stable canonical ID, `decoding` decides which claims win for each
+   `(entity, period, field, def)` bucket.
+3. **Only promoted IDs are canonical.** `canon org` `escrow_id` values are
+   provisional memory, not canonical identity. They must never appear as bucket
+   keys, mutation keys, or published canonical foreign keys.
+4. **Unresolved identity stays unresolved.** If hot-path lookup into promoted
+   `canon` registries fails, `decoding` creates a decoder-local unresolved
+   handle and preserves the evidence. It may rank candidate identities, but it
+   must not mint a fake canonical ID just to keep the loop moving.
+5. **Registry growth is asynchronous.** When `canon org` promotes new aliases or
+   new org IDs, later decode runs may re-resolve prior unresolved handles
+   against the new registry snapshot. That replay loop is valid; hidden hot-path
+   identity mutation is not.
+
+### Hot path vs cold path
+
+In v0 the default split is:
+
+```text
+claims -> decoding -> mutations / canon_entry
+                ^
+                |
+      promoted flat canon registries
+                ^
+                |
+      canon org run/audit/promote (offline)
+```
+
+The hot path uses the flat lookup registry only. `canon org` remains a cold-path
+compiler that improves the next registry snapshot.
+
+### Snapshot contract
+
+For the default v0 contract, `decoding` should record the exact promoted
+registry snapshot it consumed for identity resolution. That means at minimum:
+
+- registry id
+- registry version
+- lookup snapshot hash
+
+If a future version of `decoding` ever consumes `canon org` sidecars directly
+(for example trusted anchors or escrow memory in the hot path), then replay
+determinism must also capture:
+
+- escrow snapshot hash
+- `canon org` strategy content hash
+- the content hash of the audited `canon org` result or promote artifact that
+  justified the sidecar state
+
+Without that stronger snapshot contract, decode replay is underspecified.
+
+### Boundary of responsibility
+
+`canon org` does not make `decoding` obsolete because identity resolution is
+only one upstream dependency of claim resolution.
+
+- `canon org` answers: **who is this organization?**
+- `decoding` answers: **given these competing claims, what is true?**
+
+`decoding` still has to resolve field values, temporal precedence, source
+hierarchy, tolerance windows, derivation weighting, structural constraints, and
+escalation policy even after identity is known.
 
 ---
 
@@ -410,7 +498,56 @@ Options:
 | **assess** | Conflict policies align with assess decision bands |
 | **benchmark** | Gold set assertions validate decode correctness |
 | **fingerprint** | Template matches determine which extractor runs (Mode 1) |
+| **airlock** | If decode outputs or decode-derived telemetry are sent to a model, airlock proves exactly what crossed the model boundary. It does not score decode correctness or resolve claims. |
 | **pack** | Decode explanations + mutations/canon entries sealed as evidence |
+
+---
+
+## Relationship to `airlock`
+
+`airlock` sits **after deterministic decode artifacts and before model
+execution**.
+
+```text
+claims
+  -> decoding
+  -> mutations / canon_entry / decode explanations
+  -> airlock assemble + verify
+  -> model request
+  -> downstream evaluation / sealing
+```
+
+This matters because the two tools solve different problems:
+
+- `decoding` proves how canonical values were chosen from competing claims
+- `airlock` proves what bytes and derived fragments crossed into the model zone
+
+Airlock is therefore not part of bucket resolution, cascade policy, or entity
+resolution. It is the boundary-attestation primitive used when decoded outputs
+become model inputs.
+
+### Typical uses together
+
+1. `decoding` resolves document claims into canonical mutations and explanation
+   artifacts.
+2. A downstream workflow wants a model to review escalations, summarize novel
+   cases, or mutate strategy proposals from decode telemetry.
+3. `airlock` assembles the model prompt from those deterministic artifacts,
+   verifies the request against boundary policy, and emits a manifest proving
+   what crossed.
+
+That preserves the spine split:
+
+- `decoding` owns truth convergence
+- `airlock` owns boundary attestation
+- downstream tools such as `benchmark`, `verify`, `assess`, and `pack` score,
+  classify, and seal the resulting workflow artifacts
+
+Airlock becomes especially important for decode-adjacent human-in-the-loop
+workflows: escalation review, gold-set mutation proposals, or archaeology
+summaries for experts. In those cases the question is no longer "did the decode
+policy resolve the claim correctly?" but "what exactly did we expose to the
+model while asking for help?"
 
 ---
 
@@ -436,4 +573,4 @@ Follows the same implementation standards as protocol tools: `#![forbid(unsafe_c
 
 ## Determinism
 
-Same claims + same policy + same registries = same output. Content-addressed claims ensure replay is exact. The decode explanation graph records every decision. Regressions are detectable by diffing outputs across decode policy versions.
+Same claims + same policy + same registry snapshots = same output. Content-addressed claims ensure replay is exact. The decode explanation graph records every decision. Regressions are detectable by diffing outputs across decode policy versions.
