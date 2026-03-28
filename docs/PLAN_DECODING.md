@@ -1,14 +1,14 @@
 # decoding — Phase 1
 
 ## One-line promise
-**Turn archaeology claims into a deterministic canonical map for one bounded
-legacy outcome slice.**
+**Turn ambiguous archaeology propositions into a deterministic canonical map
+for one bounded legacy outcome slice.**
 
 This repo is no longer planning the whole end-state decode universe as the
 current implementation wedge. Phase 1 is intentionally narrow:
 
 - archaeology mode only
-- consume `claim.v0` from `crucible scan`
+- consume derived `claim.v0` from `crucible scan`
 - converge claims into a canonical map
 - emit escalations where ambiguity remains
 
@@ -34,6 +34,9 @@ It needs to do one thing well:
 **take messy claims from multiple legacy surfaces and produce the first usable,
 auditable canonical understanding of the slice.**
 
+That does NOT mean every scan fact should pass through `decoding`. Directly
+observed metadata should land in the catalog first and bypass decode entirely.
+
 ---
 
 ## What Phase 1 is not
@@ -48,6 +51,37 @@ Phase 1 is NOT:
 - a model-assisted reasoner
 
 Those may return later. They are not part of the current build wedge.
+
+---
+
+## Direct observation vs decode
+
+Phase 1 should keep a hard split between:
+
+1. **Observed metadata**
+   Facts directly recoverable from scans and normalized into the metadata
+   catalog.
+2. **Derived claims**
+   Propositions that are ambiguous, inferential, or contradicted across
+   sources.
+
+`decoding` only owns the second category.
+
+Examples that should bypass `decoding`:
+
+- table and column existence
+- file inventory
+- directly observed applications, jobs, reports, feeds, mappings, and
+  consumers
+- mechanically extractable lineage or dependency edges
+
+Examples that should go through `decoding`:
+
+- inferred `valid_values`
+- `liveness` assessments
+- `authoritative_for`
+- semantic labels
+- weak or conflicting dependency edges
 
 ---
 
@@ -75,7 +109,8 @@ That is the Phase 1 bar.
 
 ## Phase 1 input contract
 
-Phase 1 consumes the `claim.v0` contract emitted by `crucible`.
+Phase 1 consumes the derived `claim.v0` contract emitted by `crucible` when
+direct observation alone is not enough.
 
 Required shape:
 
@@ -137,6 +172,9 @@ Escalation conditions:
 
 If the decoder accepts a claim into a bucket, that claim has already passed the
 Phase 1 validity gate.
+
+The decoder should therefore be thought of as a convergence layer above the
+catalog, not as the ingestion path for all scan output.
 
 ---
 
@@ -700,12 +738,14 @@ Phase 1 should not carry these abstractions.
 
 ## Relationship to `crucible`
 
-`crucible` discovers evidence. `decoding` converges it.
+`crucible` discovers evidence. `decoding` converges only the subset of that
+evidence that is actually a claim-resolution problem.
 
 ```text
 legacy estate
   -> crucible scan
-  -> claim.v0
+  -> metadata catalog / lineage / inventory
+  -> derived claim.v0 where needed
   -> decoding archaeology
   -> canon_entry.v0 + escalation.v0 + convergence.v0
 ```
