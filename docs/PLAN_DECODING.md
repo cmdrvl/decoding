@@ -149,6 +149,7 @@ Rules:
 - `claim_id` is content-addressed from normalized payload
 - decoding trusts provenance, not narrative
 - identical claims must replay identically
+- unknown `source.kind` values are refusal conditions in Phase 1
 - unknown `subject.kind` or `property_type` values are refusal conditions in
   Phase 1
 - malformed JSON, malformed `claim_id`, or property/value shape mismatches are
@@ -163,6 +164,7 @@ Refusal (`exit 2`) conditions:
 - malformed JSONL
 - missing required fields
 - malformed `claim_id`
+- unknown `source.kind`
 - unknown `subject.kind`
 - unknown `property_type`
 - `value` shape that does not match the frozen property contract
@@ -238,6 +240,14 @@ The rest stay on the base bucket key.
 ### Buckets
 
 Each unique logical bucket key is a bucket.
+
+Duplicate claim handling is deterministic:
+
+- repeated identical `claim_id`s collapse to one logical claim before bucketing
+- `convergence.claim_count` counts distinct claims after that collapse
+- source-artifact distinct counting is computed from the surviving distinct
+  claims
+- explanation payloads never repeat the same `claim_id`
 
 Claims pour into buckets from multiple sources. The bucket moves through a
 small state machine:
@@ -429,7 +439,10 @@ Required shape:
   "property_type": "semantic_label",
   "reason": "conflicted",
   "claim_ids": ["sha256:...", "sha256:..."],
-  "candidate_values": ["Adjusted EBITDA rule family", "EBITDA exception class"],
+  "candidate_values": [
+    {"kind": "scalar", "value": "Adjusted EBITDA rule family"},
+    {"kind": "scalar", "value": "EBITDA exception class"}
+  ],
   "recommended_action": "review",
   "summary": "two incompatible semantic interpretations remain"
 }
@@ -446,7 +459,7 @@ Frozen field contract:
 | `property_type` | enum | same frozen vocabulary as input |
 | `reason` | enum | `conflicted`, `missing_corroboration`, `no_resolution_path` |
 | `claim_ids` | array | sorted claim IDs in the bucket |
-| `candidate_values` | array | normalized candidate values or edge targets under review |
+| `candidate_values` | array | normalized candidate values under review; each entry is either `{"kind":"scalar","value":...}` or a subject ref object |
 | `recommended_action` | enum | `review`, `scan_more`, `fix_scanner`, `fix_policy` |
 | `summary` | string | short human-readable one-line explanation |
 
@@ -591,6 +604,7 @@ to code without reopening the model:
 
 1. **Contract module**
    - input claim parser
+   - frozen enum for `source.kind`
    - frozen enums for `subject.kind` and `property_type`
    - bucket-id builder
    - normalized value helpers
