@@ -67,6 +67,10 @@ Phase 1 should keep a hard split between:
 
 `decoding` only owns the second category.
 
+In other words, `decoding` consumes only the claim channel from the
+two-channel Crucible scanner contract. It does not ingest catalog hydration
+records.
+
 Examples that should bypass `decoding`:
 
 - table and column existence
@@ -175,6 +179,9 @@ Phase 1 validity gate.
 
 The decoder should therefore be thought of as a convergence layer above the
 catalog, not as the ingestion path for all scan output.
+
+If a future implementation finds itself parsing table/file/resource/link
+catalog records directly, the boundary has drifted and should be corrected.
 
 ---
 
