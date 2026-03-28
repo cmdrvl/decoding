@@ -28,7 +28,9 @@ Both problems share the same structure:
 `decoding` is NOT:
 - An extractor or scanner (those emit claims; decoding consumes them)
 - A database (that's `twinning` for dev, real Postgres for production)
+- An identity compiler or registry builder (that belongs to `canon` / `canon org`)
 - Probabilistic or ML-based (v0 is fully deterministic)
+- A model-boundary attestation layer (that belongs to `airlock`)
 - A general-purpose ETL tool
 - A message bus consumer (claims are JSONL files, not events on a stream)
 
@@ -229,7 +231,7 @@ The state machine is the same for both modes. What differs is the bucket key, th
 | Property | Converges when | Rationale |
 |----------|---------------|-----------|
 | Data value | 2+ independent extractors agree within tolerance | Different templates, same answer |
-| Entity identity | Canon registry resolves OR 2+ sources agree on entity ref | Structural fingerprinting |
+| Entity identity | Promoted canon registry resolves to a canonical ID, OR 2+ sources converge on the same unresolved handle without minting canonical identity | Identity may converge operationally before canon promotion, but unresolved is still unresolved |
 
 **Mode 2 (archaeology):**
 
@@ -413,6 +415,38 @@ escalation policy even after identity is known.
 
 ---
 
+## Contract with `twinning` and real Postgres
+
+`decoding` is upstream of both `twinning` and any real database materialization.
+
+The implementation wedge matters:
+
+- first prove the decode loop on deterministic artifacts plus real Postgres
+- then add `twinning` when protocol fidelity and iteration speed become the
+  bottleneck
+
+That yields a strict split:
+
+1. **`decoding` owns truth convergence.** It resolves claims into canonical
+   mutations or canonical archaeology entries with explanation graphs.
+2. **Real Postgres or `twinning` own materialized-state behavior.** They apply
+   already-decided mutations, enforce runtime/storage constraints, and surface
+   downstream contradictions.
+3. **`twinning` is not a truth layer.** It does not canonicalize entities,
+   resolve conflicting claims, or rank policy alternatives.
+4. **Constraint failure is downstream evidence, not adjudication.** If a
+   resolved mutation fails against Postgres or a twin, that failure feeds back
+   into decode policy, upstream claims, or transform logic. The storage/runtime
+   layer still does not decide what is true.
+
+Short version:
+
+- `decoding` decides what canonical state should be
+- Postgres / `twinning` decide whether that state behaves and validates
+- `twinning` is the later speed/protocol layer, not the first proof step
+
+---
+
 ## Gold set
 
 The gold set turns years of edge cases into executable acceptance tests.
@@ -491,9 +525,9 @@ Options:
 
 | Tool | Relationship |
 |------|-------------|
-| **factory** | Factory scan produces claims; decoding resolves them. Factory orchestrates the loop. |
+| **factory** | Factory scan produces archaeology claims and orchestrates the loop. The first proof path is deterministic artifacts plus real Postgres; `twinning` is added later as the speed/protocol layer. |
 | **canon** | Provides versioned entity registries for identity resolution (Mode 1) |
-| **twinning** | Receives mutations (Mode 1), enforces constraints, scores coverage |
+| **twinning** | Optional downstream speed/protocol layer. Receives resolved mutations or assembled candidate state, enforces runtime constraints, and surfaces behavior; it does not resolve claims. |
 | **verify** | Rules are precode constraints in bucket resolution (Mode 1) |
 | **assess** | Conflict policies align with assess decision bands |
 | **benchmark** | Gold set assertions validate decode correctness |
