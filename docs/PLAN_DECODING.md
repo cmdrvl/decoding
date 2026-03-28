@@ -284,7 +284,8 @@ Sources scanned: 5 of 7 known applications
 
 ### Mode 2: Archaeology decode
 
-1. Scanners (factory scan --db, factory scan --repo) emit `claim.v0` events as JSONL files — one file per source.
+1. Scanners (`crucible scan --db`, `crucible scan --repo`) emit `claim.v0`
+   events as JSONL files — one file per source.
 2. Each claim is content-addressed and carries source provenance (which scanner, which file, which line).
 3. Claims are inserted into their `(table, column, property_type)` bucket.
 4. After each insertion, the decoder updates convergence state. DDL claims auto-resolve structural buckets (confidence 1.0). Usage and semantics buckets require corroboration.
@@ -493,7 +494,9 @@ Four mathematical properties make the decode loop work:
 
 3. **Submodular coverage.** Each new source increases the "converged" fraction of buckets — with diminishing returns. The marginal value of the next source is measurable before you scan it. Chao1 estimator and rarefaction curves give principled stopping criteria.
 
-4. **Escalation rate as loss function.** The factory minimizes escalation rate subject to gold-set correctness. Measurable, monotonic in system quality, bounded above by "escalate everything" (the safe default).
+4. **Escalation rate as loss function.** Crucible minimizes escalation rate
+   subject to gold-set correctness. Measurable, monotonic in system quality,
+   bounded above by "escalate everything" (the safe default).
 
 ---
 
@@ -525,7 +528,7 @@ Options:
 
 | Tool | Relationship |
 |------|-------------|
-| **factory** | Factory scan produces archaeology claims and orchestrates the loop. The first proof path is deterministic artifacts plus real Postgres; `twinning` is added later as the speed/protocol layer. |
+| **crucible** | Crucible scan produces archaeology claims and orchestrates the loop. The first proof path is deterministic artifacts plus real Postgres; `twinning` is added later as the speed/protocol layer. |
 | **canon** | Provides versioned entity registries for identity resolution (Mode 1) |
 | **twinning** | Optional downstream speed/protocol layer. Receives resolved mutations or assembled candidate state, enforces runtime constraints, and surfaces behavior; it does not resolve claims. |
 | **verify** | Rules are precode constraints in bucket resolution (Mode 1) |
