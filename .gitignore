@@ -1,0 +1,5 @@
+# bv (beads viewer) local config and caches
+.bv/
+
+# br local history
+.beads/.br_history/
