@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::vocabulary::{PropertyType, SourceKind, SubjectKind};
+use super::vocabulary::{PropertyType, SourceKind, SubjectRef, ValueRef};
 
 /// A derived claim from a crucible scan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,11 +30,15 @@ pub struct SourceLocator {
     pub value: String,
 }
 
-/// A reference to a subject or value entity.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct SubjectRef {
-    pub kind: SubjectKind,
-    pub id: String,
+impl Claim {
+    /// Return the edge target as a typed value reference when this property uses edge buckets.
+    pub fn value_ref(&self) -> Result<Option<ValueRef>, serde_json::Error> {
+        if !self.property_type.is_edge() {
+            return Ok(None);
+        }
+
+        serde_json::from_value(self.value.clone()).map(Some)
+    }
 }
 
 /// Parse a single claim from a JSON line. Returns the claim or a refusal error.

@@ -2,8 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::claim::SubjectRef;
-use super::vocabulary::PropertyType;
+use super::vocabulary::{PropertyType, SubjectRef};
 
 /// An escalation emitted for an unresolved or conflicting bucket.
 #[derive(Debug, Clone, Serialize, Deserialize)]

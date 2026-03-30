@@ -2,8 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::claim::SubjectRef;
-use super::vocabulary::PropertyType;
+use super::vocabulary::{PropertyType, SubjectRef};
 
 /// A resolved canonical entry emitted for a converged bucket.
 #[derive(Debug, Clone, Serialize, Deserialize)]

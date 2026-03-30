@@ -1,7 +1,7 @@
 //! Logical bucket keys, edge/base bucket construction, bucket grouping, and bucket store.
 
-use crate::contracts::claim::{Claim, SubjectRef};
-use crate::contracts::vocabulary::PropertyType;
+use crate::contracts::claim::Claim;
+use crate::contracts::vocabulary::{PropertyType, SubjectRef, ValueRef};
 
 /// The logical key for a bucket. Base buckets use subject + property_type.
 /// Edge buckets additionally include the value ref.
@@ -9,7 +9,7 @@ use crate::contracts::vocabulary::PropertyType;
 pub struct BucketKey {
     pub subject: SubjectRef,
     pub property_type: PropertyType,
-    pub value_ref: Option<SubjectRef>,
+    pub value_ref: Option<ValueRef>,
 }
 
 /// A bucket collecting claims for a single logical key.

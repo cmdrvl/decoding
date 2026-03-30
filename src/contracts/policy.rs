@@ -5,15 +5,15 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::vocabulary::PropertyType;
+use super::vocabulary::{PropertyType, SourceKind};
 
 /// The decoded archaeology policy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Policy {
     pub policy_id: String,
     pub auto_resolve: Vec<PropertyType>,
-    pub min_corroboration: HashMap<String, usize>,
-    pub source_priority: HashMap<String, Vec<String>>,
+    pub min_corroboration: HashMap<PropertyType, usize>,
+    pub source_priority: HashMap<PropertyType, Vec<SourceKind>>,
 }
 
 /// Load and validate a policy file. Refuses on unknown keys.

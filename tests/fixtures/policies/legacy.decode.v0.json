@@ -1,0 +1,17 @@
+{
+  "policy_id": "legacy.decode.v0",
+  "auto_resolve": ["exists", "schema", "constraint"],
+  "min_corroboration": {
+    "reads": 2,
+    "writes": 2,
+    "depends_on": 2,
+    "used_by": 2,
+    "schedule": 2,
+    "valid_values": 2,
+    "semantic_label": 2,
+    "authoritative_for": 2
+  },
+  "source_priority": {
+    "liveness": ["db_scan", "file_scan", "repo_scan"]
+  }
+}
