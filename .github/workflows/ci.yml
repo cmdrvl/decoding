@@ -1,0 +1,126 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: cargo fmt --check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Restore cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fast-ci-stable
+
+      - name: Start timer
+        run: echo "JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Run cargo fmt --check
+        run: cargo fmt --check
+
+      - name: Write job summary
+        if: always()
+        run: |
+          ended_at=$(date +%s)
+          started_at="${JOB_STARTED_AT:-$ended_at}"
+          elapsed_seconds=$((ended_at - started_at))
+          {
+            echo "### cargo fmt --check"
+            echo
+            echo "- Status: ${{ job.status }}"
+            echo "- Elapsed: ${elapsed_seconds}s"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  clippy:
+    name: cargo clippy --all-targets -- -D warnings
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Restore cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fast-ci-stable
+
+      - name: Start timer
+        run: echo "JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Run cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Write job summary
+        if: always()
+        run: |
+          ended_at=$(date +%s)
+          started_at="${JOB_STARTED_AT:-$ended_at}"
+          elapsed_seconds=$((ended_at - started_at))
+          {
+            echo "### cargo clippy --all-targets -- -D warnings"
+            echo
+            echo "- Status: ${{ job.status }}"
+            echo "- Elapsed: ${elapsed_seconds}s"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fast-ci-stable
+
+      - name: Start timer
+        run: echo "JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Run cargo test
+        run: cargo test
+
+      - name: Write job summary
+        if: always()
+        run: |
+          ended_at=$(date +%s)
+          started_at="${JOB_STARTED_AT:-$ended_at}"
+          elapsed_seconds=$((ended_at - started_at))
+          {
+            echo "### cargo test"
+            echo
+            echo "- Status: ${{ job.status }}"
+            echo "- Elapsed: ${elapsed_seconds}s"
+          } >> "$GITHUB_STEP_SUMMARY"
