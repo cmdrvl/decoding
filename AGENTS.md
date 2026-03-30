@@ -457,14 +457,13 @@ Avoid renaming these into "friendlier" local synonyms.
 
 Current repo reality:
 
-- Rust crate scaffolded with CLI shell and zero-logic module stubs
-- No CI workflow yet (bead bd-3p5 covers this)
-- No release workflow yet (bead bd-y31 covers this)
-- No published binary
+- Phase 1 fully implemented — 4,200+ lines of Rust, 75+ tests
+- CI workflow at `.github/workflows/ci.yml` (fmt + clippy + test)
+- Release workflow at `.github/workflows/release.yml` (cross-platform binaries on tag push)
+- Smoke workflow at `.github/workflows/smoke.yml` (CLI execution tests)
+- v0.1.0 is the first tagged release
 
-Do not add README badges or install claims until they are real.
-
-Target CI/release discipline:
+CI/release discipline:
 
 - `fmt` / `clippy` / `test` / `ubs` before publish
 - deterministic artifacts

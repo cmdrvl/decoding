@@ -2,7 +2,9 @@
 
 <div align="center">
 
+[![CI](https://github.com/cmdrvl/decoding/actions/workflows/ci.yml/badge.svg)](https://github.com/cmdrvl/decoding/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub release](https://img.shields.io/github/v/release/cmdrvl/decoding)](https://github.com/cmdrvl/decoding/releases)
 
 **Multiple legacy systems claim conflicting things about the same entity. decoding settles it.**
 
@@ -486,7 +488,13 @@ By design, `dead` should never auto-win from absence alone. If a subject is mark
 | `src/resolve.rs` | State machine, resolution decisions |
 | `src/render.rs` | JSONL output rendering for canonical entries and escalations |
 | `src/report.rs` | Convergence summary generation |
-| `tests/` | Contract, fixture, and snapshot test suites |
+| `src/fixtures.rs` | Fixture path helpers for tests |
+| `tests/fixture_loaders.rs` | Shared fixture loading integration tests |
+| `tests/output_snapshots.rs` | Locked output snapshot tests |
+| `tests/fixtures/` | Claim fixtures, policy fixtures, expected outputs |
+| `.github/workflows/ci.yml` | Fast quality-gate CI (fmt + clippy + test) |
+| `.github/workflows/release.yml` | Tagged release workflow (Linux + macOS + Windows) |
+| `.github/workflows/smoke.yml` | CLI smoke tests with runtime metrics |
 | `docs/PLAN_DECODING.md` | Full implementation spec |
 
 ---
@@ -512,12 +520,18 @@ Current work should improve one of:
 
 ## Roadmap
 
+Completed in v0.1.0:
+
+- All Phase 1 modules implemented (contracts, bucketing, comparators, resolver, outputs)
+- CI quality-gate workflow
+- Tagged release workflow with cross-platform binaries
+- CLI smoke tests
+- 75+ tests with snapshot locking
+
 Near-term:
 
-- Implement all Phase 1 modules (contracts, bucketing, comparators, resolver, outputs)
-- Add CI quality-gate workflow
-- Cut first tagged release
 - Run against first real Hyperion archaeology slice
+- Homebrew tap formula
 
 Deferred by design:
 
