@@ -168,6 +168,11 @@ fn resolve_liveness(bucket: &Bucket, policy: &Policy, groups: &[CandidateGroup])
     };
 
     let chosen = select_group_by_source_priority(groups, source_priority);
+    let resolution_kind = if source_priority_break_applied(groups, chosen, source_priority) {
+        ResolutionKind::PriorityBreak
+    } else {
+        ResolutionKind::LivenessFold
+    };
 
     Decision::Resolved(ResolvedDecision {
         entry: build_canon_entry(
@@ -177,7 +182,7 @@ fn resolve_liveness(bucket: &Bucket, policy: &Policy, groups: &[CandidateGroup])
             ConvergenceStateKind::Converging,
             chosen.claim_ids.clone(),
             claim_ids(bucket),
-            ResolutionKind::LivenessFold,
+            resolution_kind,
         ),
         source_kinds: source_kinds(bucket),
     })
@@ -497,6 +502,45 @@ fn best_source_rank(group: &CandidateGroup, source_priority: &[SourceKind]) -> u
         .unwrap_or(source_priority.len() + 1)
 }
 
+fn source_priority_break_applied(
+    groups: &[CandidateGroup],
+    chosen: &CandidateGroup,
+    source_priority: &[SourceKind],
+) -> bool {
+    let Some(best_without_priority) = select_group_without_source_priority(groups) else {
+        return false;
+    };
+
+    best_source_rank(chosen, source_priority)
+        < best_source_rank(best_without_priority, source_priority)
+        && chosen.canonical_key != best_without_priority.canonical_key
+}
+
+fn select_group_without_source_priority(groups: &[CandidateGroup]) -> Option<&CandidateGroup> {
+    let mut best = groups.first()?;
+
+    for group in groups.iter().skip(1) {
+        if compare_group_without_source_priority(group, best) == Ordering::Less {
+            best = group;
+        }
+    }
+
+    Some(best)
+}
+
+fn compare_group_without_source_priority(
+    left: &CandidateGroup,
+    right: &CandidateGroup,
+) -> Ordering {
+    match right.source_count().cmp(&left.source_count()) {
+        Ordering::Equal => match right.claim_ids.len().cmp(&left.claim_ids.len()) {
+            Ordering::Equal => left.canonical_key.cmp(&right.canonical_key),
+            other => other,
+        },
+        other => other,
+    }
+}
+
 fn canonical_output_value(
     property_type: PropertyType,
     value: &serde_json::Value,
@@ -753,6 +797,46 @@ mod tests {
                     "sha256:5555555555555555555555555555555555555555555555555555555555555555"
                         .to_string(),
                     "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+                        .to_string(),
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn resolves_liveness_with_priority_break_when_source_priority_decides_winner() {
+        let mut store = BucketStore::default();
+        store.insert(
+            parse_claim(r#"{"event":"claim.v0","claim_id":"sha256:1111111111111111111111111111111111111111111111111111111111111111","source":{"kind":"db_scan","scanner":"crucible.scan.db@0.1.0","artifact_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","locator":{"kind":"table_row","value":"ops.feed_registry#fdmee.actuals_load"}},"subject":{"kind":"feed","id":"fdmee.actuals_load"},"property_type":"liveness","value":{"kind":"scalar","value":"stale"},"confidence":0.91}"#).unwrap(),
+        );
+        store.insert(
+            parse_claim(r#"{"event":"claim.v0","claim_id":"sha256:2222222222222222222222222222222222222222222222222222222222222222","source":{"kind":"repo_scan","scanner":"crucible.scan.repo@0.1.0","artifact_id":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","locator":{"kind":"file_range","value":"jobs/feed_refresh.py#L44-L91"}},"subject":{"kind":"feed","id":"fdmee.actuals_load"},"property_type":"liveness","value":{"kind":"scalar","value":"alive"},"confidence":0.79}"#).unwrap(),
+        );
+
+        let policy = load_policy_fixture("legacy.decode.v0.json").unwrap();
+        let bucket = store.buckets.values().next().unwrap();
+
+        let decision = resolve_bucket(bucket, &policy);
+        assert!(matches!(&decision, Decision::Resolved(_)));
+
+        if let Decision::Resolved(decision) = decision {
+            let entry = decision.entry;
+            assert_eq!(entry.canonical_value, json!("stale"));
+            assert_eq!(entry.convergence.state, ConvergenceStateKind::Converging);
+            assert_eq!(entry.explain.resolution_kind, ResolutionKind::PriorityBreak);
+            assert_eq!(
+                entry.explain.winner_claim_ids,
+                vec![
+                    "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                        .to_string(),
+                ]
+            );
+            assert_eq!(
+                entry.explain.compatible_claim_ids,
+                vec![
+                    "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                        .to_string(),
+                    "sha256:2222222222222222222222222222222222222222222222222222222222222222"
                         .to_string(),
                 ]
             );
