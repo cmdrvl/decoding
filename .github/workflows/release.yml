@@ -49,7 +49,7 @@ jobs:
               publish_release=false
             fi
           else
-            build_ref="${GITHUB_REF}"
+            build_ref="${GITHUB_SHA}"
             release_tag="${GITHUB_REF_NAME}"
             release_version="${GITHUB_REF_NAME}"
             publish_release=true
