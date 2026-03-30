@@ -1,0 +1,135 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build
+        required: true
+        default: main
+      release_tag:
+        description: Tag name to publish; leave blank to build artifacts only
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      build_ref: ${{ steps.meta.outputs.build_ref }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      release_version: ${{ steps.meta.outputs.release_version }}
+      publish_release: ${{ steps.meta.outputs.publish_release }}
+    steps:
+      - id: meta
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            build_ref="${{ inputs.ref }}"
+            if [[ -n "${{ inputs.release_tag }}" ]]; then
+              release_tag="${{ inputs.release_tag }}"
+              release_version="${{ inputs.release_tag }}"
+              publish_release=true
+            else
+              release_tag=""
+              release_version="manual-${GITHUB_RUN_NUMBER}"
+              publish_release=false
+            fi
+          else
+            build_ref="${GITHUB_REF}"
+            release_tag="${GITHUB_REF_NAME}"
+            release_version="${GITHUB_REF_NAME}"
+            publish_release=true
+          fi
+
+          {
+            echo "build_ref=${build_ref}"
+            echo "release_tag=${release_tag}"
+            echo "release_version=${release_version}"
+            echo "publish_release=${publish_release}"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset_suffix: linux
+            binary_ext: ""
+          - os: macos-latest
+            asset_suffix: macos
+            binary_ext: ""
+          - os: windows-latest
+            asset_suffix: windows
+            binary_ext: ".exe"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.build_ref }}
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-stable
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - id: package
+        shell: bash
+        run: |
+          artifact_name="decoding-${{ needs.prepare.outputs.release_version }}-${{ matrix.asset_suffix }}${{ matrix.binary_ext }}"
+          mkdir -p dist
+          cp "target/release/decoding${{ matrix.binary_ext }}" "dist/${artifact_name}"
+          echo "artifact_name=${artifact_name}" >> "$GITHUB_OUTPUT"
+          echo "artifact_path=dist/${artifact_name}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: ${{ steps.package.outputs.artifact_path }}
+          if-no-files-found: error
+
+  publish:
+    needs:
+      - prepare
+      - build
+    if: needs.prepare.outputs.publish_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.release_tag }}
+          target_commitish: ${{ needs.prepare.outputs.build_ref }}
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
