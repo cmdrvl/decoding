@@ -4,6 +4,7 @@ pub mod bucket;
 pub mod cli;
 pub mod compare;
 pub mod contracts;
+pub mod fixtures;
 pub mod normalize;
 pub mod render;
 pub mod report;
