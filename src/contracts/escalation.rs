@@ -6,6 +6,7 @@ use super::vocabulary::{PropertyType, SubjectRef, ValueRef};
 
 /// An escalation emitted for an unresolved or conflicting bucket.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Escalation {
     pub event: String,
     pub bucket_id: String,
@@ -135,5 +136,34 @@ mod tests {
 
         let reparsed: Escalation = serde_json::from_value(rendered).unwrap();
         assert_eq!(reparsed, escalation);
+    }
+
+    #[test]
+    fn escalation_rejects_unknown_fields() {
+        let error = serde_json::from_value::<Escalation>(json!({
+            "event": "escalation.v0",
+            "bucket_id": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "subject": {
+                "kind": "mapping",
+                "id": "adj.ebitda.rule.family"
+            },
+            "property_type": "semantic_label",
+            "reason": "conflicted",
+            "claim_ids": [
+                "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+            ],
+            "candidate_values": [
+                {
+                    "kind": "scalar",
+                    "value": "Adjusted EBITDA rule family"
+                }
+            ],
+            "recommended_action": "review",
+            "summary": "two incompatible semantic interpretations remain",
+            "unexpected": true
+        }))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unknown field"));
     }
 }

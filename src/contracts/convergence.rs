@@ -7,6 +7,7 @@ use super::vocabulary::{PropertyType, SourceKind};
 
 /// Summary report of the archaeology convergence run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConvergenceReport {
     pub event: String,
     pub policy_id: String,
@@ -18,6 +19,7 @@ pub struct ConvergenceReport {
 
 /// Aggregate bucket-state totals for a convergence run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConvergenceTotals {
     pub buckets: usize,
     pub converged: usize,
@@ -117,5 +119,28 @@ mod tests {
 
         let reparsed: ConvergenceReport = serde_json::from_value(rendered).unwrap();
         assert_eq!(reparsed, report);
+    }
+
+    #[test]
+    fn convergence_report_rejects_unknown_fields() {
+        let error = serde_json::from_value::<ConvergenceReport>(json!({
+            "event": "convergence.v0",
+            "policy_id": "legacy.decode.v0",
+            "totals": {
+                "buckets": 42,
+                "converged": 31,
+                "converging": 0,
+                "single_source": 6,
+                "conflicted": 5,
+                "escalated": 5
+            },
+            "by_property_type": {},
+            "by_source_kind": {},
+            "top_escalations": [],
+            "unexpected": true
+        }))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unknown field"));
     }
 }

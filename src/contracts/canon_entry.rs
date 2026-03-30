@@ -6,6 +6,7 @@ use super::vocabulary::{PropertyType, SubjectRef};
 
 /// A resolved canonical entry emitted for a converged bucket.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CanonEntry {
     pub event: String,
     pub bucket_id: String,
@@ -18,6 +19,7 @@ pub struct CanonEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConvergenceState {
     pub state: ConvergenceStateKind,
     pub source_count: usize,
@@ -25,6 +27,7 @@ pub struct ConvergenceState {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Explanation {
     pub winner_claim_ids: Vec<String>,
     pub compatible_claim_ids: Vec<String>,
@@ -132,5 +135,41 @@ mod tests {
 
         let reparsed: CanonEntry = serde_json::from_value(rendered).unwrap();
         assert_eq!(reparsed, entry);
+    }
+
+    #[test]
+    fn canon_entry_rejects_unknown_fields() {
+        let error = serde_json::from_value::<CanonEntry>(json!({
+            "event": "canon_entry.v0",
+            "bucket_id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "subject": {
+                "kind": "report",
+                "id": "hyperion.close_pack_ebitda"
+            },
+            "property_type": "depends_on",
+            "canonical_value": {
+                "kind": "feed",
+                "id": "fdmee.actuals_load"
+            },
+            "policy_id": "legacy.decode.v0",
+            "convergence": {
+                "state": "converged",
+                "source_count": 3,
+                "claim_count": 4,
+                "unexpected": true
+            },
+            "explain": {
+                "winner_claim_ids": [
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                ],
+                "compatible_claim_ids": [
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                ],
+                "resolution_kind": "corroborated"
+            }
+        }))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unknown field"));
     }
 }
