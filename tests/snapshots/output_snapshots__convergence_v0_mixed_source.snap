@@ -1,0 +1,64 @@
+---
+source: tests/output_snapshots.rs
+expression: report
+---
+{
+  "by_property_type": {
+    "authoritative_for": 1,
+    "depends_on": 1,
+    "liveness": 1,
+    "schedule": 1,
+    "semantic_label": 1,
+    "valid_values": 1
+  },
+  "by_source_kind": {
+    "db_scan": 3,
+    "file_scan": 5,
+    "repo_scan": 4
+  },
+  "event": "convergence.v0",
+  "policy_id": "legacy.decode.v0",
+  "top_escalations": [
+    {
+      "bucket_id": "sha256:2a70fc2ec9ff0efdf53f71aca0a97e4944e363ce63ed33678165a52e40570da8",
+      "property_type": "valid_values",
+      "reason": "missing_corroboration",
+      "recommended_action": "scan_more",
+      "subject": {
+        "id": "adj.status_code_map",
+        "kind": "mapping"
+      },
+      "summary": "need at least 2 corroborating sources, found 1"
+    },
+    {
+      "bucket_id": "sha256:70e13850a117a7ede879bb9d0e7119d7be0cbcf6e8789a6bb99e4e8f0db584ae",
+      "property_type": "authoritative_for",
+      "reason": "missing_corroboration",
+      "recommended_action": "scan_more",
+      "subject": {
+        "id": "hyperion.close_pack_ebitda",
+        "kind": "report"
+      },
+      "summary": "need at least 2 corroborating sources, found 1"
+    },
+    {
+      "bucket_id": "sha256:ad230f8d5bae8044b4ea7715729571683465ff6ee0e38a4d18dc0472986e3763",
+      "property_type": "semantic_label",
+      "reason": "conflicted",
+      "recommended_action": "review",
+      "subject": {
+        "id": "adj.ebitda.rule.family",
+        "kind": "mapping"
+      },
+      "summary": "2 incompatible candidate values remain"
+    }
+  ],
+  "totals": {
+    "buckets": 6,
+    "conflicted": 1,
+    "converged": 2,
+    "converging": 1,
+    "escalated": 3,
+    "single_source": 0
+  }
+}
