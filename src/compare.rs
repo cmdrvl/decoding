@@ -153,7 +153,7 @@ enum LivenessState {
 mod tests {
     use serde_json::json;
 
-    use super::{compare, liveness_fold, Compatibility};
+    use super::{Compatibility, compare, liveness_fold};
     use crate::contracts::vocabulary::PropertyType;
 
     #[test]
