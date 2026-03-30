@@ -22,34 +22,54 @@ use serde_json::json;
 #[derive(Debug)]
 pub enum Decision {
     /// Bucket resolved to a canonical entry.
-    Resolved(CanonEntry),
+    Resolved(ResolvedDecision),
     /// Bucket escalated for human review.
-    Escalated(Escalation),
+    Escalated(EscalatedDecision),
+}
+
+/// Resolver output for a canonicalized bucket, including source-kind metadata for reporting.
+#[derive(Debug)]
+pub struct ResolvedDecision {
+    pub entry: CanonEntry,
+    pub source_kinds: Vec<SourceKind>,
+}
+
+/// Resolver output for an escalated bucket, including source-kind metadata for reporting.
+#[derive(Debug)]
+pub struct EscalatedDecision {
+    pub escalation: Escalation,
+    pub source_kinds: Vec<SourceKind>,
 }
 
 /// Resolve a single bucket against the policy. Returns a decision record.
 pub fn resolve_bucket(bucket: &Bucket, policy: &Policy) -> Decision {
     if bucket.claims.is_empty() {
-        return Decision::Escalated(build_escalation(
-            bucket,
-            EscalationReason::NoResolutionPath,
-            Vec::new(),
-            RecommendedAction::FixPolicy,
-            "bucket contained no surviving claims".to_string(),
-        ));
+        return Decision::Escalated(EscalatedDecision {
+            escalation: build_escalation(
+                bucket,
+                EscalationReason::NoResolutionPath,
+                Vec::new(),
+                RecommendedAction::FixPolicy,
+                "bucket contained no surviving claims".to_string(),
+            ),
+            source_kinds: Vec::new(),
+        });
     }
 
     let property_type = bucket.key.property_type();
     let groups = candidate_groups(bucket, property_type);
 
     if has_incompatible_claims(bucket, property_type) {
-        return Decision::Escalated(build_escalation(
-            bucket,
-            EscalationReason::Conflicted,
-            build_candidate_values(property_type, &groups),
-            recommended_action_for_conflict(policy, property_type),
-            format!("{} incompatible candidate values remain", groups.len()),
-        ));
+        return Decision::Escalated(EscalatedDecision {
+            escalation: build_escalation(
+                bucket,
+                EscalationReason::Conflicted,
+                build_candidate_values(property_type, &groups),
+                recommended_action_for_conflict(policy, property_type),
+                format!("{} incompatible candidate values remain", groups.len()),
+            ),
+            source_kinds: source_kinds(bucket),
+        });
     }
 
     if property_type == PropertyType::Liveness {
@@ -78,28 +98,34 @@ impl CandidateGroup {
 
 fn resolve_liveness(bucket: &Bucket, policy: &Policy, groups: &[CandidateGroup]) -> Decision {
     if groups.is_empty() {
-        return Decision::Escalated(build_escalation(
-            bucket,
-            EscalationReason::NoResolutionPath,
-            Vec::new(),
-            RecommendedAction::FixPolicy,
-            "policy does not define a resolution path for liveness".to_string(),
-        ));
+        return Decision::Escalated(EscalatedDecision {
+            escalation: build_escalation(
+                bucket,
+                EscalationReason::NoResolutionPath,
+                Vec::new(),
+                RecommendedAction::FixPolicy,
+                "policy does not define a resolution path for liveness".to_string(),
+            ),
+            source_kinds: source_kinds(bucket),
+        });
     }
 
     if groups.len() == 1 {
         let chosen = &groups[0];
         if is_dead_value(&chosen.canonical_value) && bucket.source_artifact_count() < 2 {
-            return Decision::Escalated(build_escalation(
-                bucket,
-                EscalationReason::MissingCorroboration,
-                build_candidate_values(PropertyType::Liveness, groups),
-                RecommendedAction::ScanMore,
-                format!(
-                    "need at least 2 corroborating sources, found {}",
-                    bucket.source_artifact_count()
+            return Decision::Escalated(EscalatedDecision {
+                escalation: build_escalation(
+                    bucket,
+                    EscalationReason::MissingCorroboration,
+                    build_candidate_values(PropertyType::Liveness, groups),
+                    RecommendedAction::ScanMore,
+                    format!(
+                        "need at least 2 corroborating sources, found {}",
+                        bucket.source_artifact_count()
+                    ),
                 ),
-            ));
+                source_kinds: source_kinds(bucket),
+            });
         }
 
         let (state, resolution_kind) = if bucket.claim_count() == 1 {
@@ -114,38 +140,47 @@ fn resolve_liveness(bucket: &Bucket, policy: &Policy, groups: &[CandidateGroup])
             )
         };
 
-        return Decision::Resolved(build_canon_entry(
-            bucket,
-            policy,
-            chosen.canonical_value.clone(),
-            state,
-            chosen.claim_ids.clone(),
-            claim_ids(bucket),
-            resolution_kind,
-        ));
+        return Decision::Resolved(ResolvedDecision {
+            entry: build_canon_entry(
+                bucket,
+                policy,
+                chosen.canonical_value.clone(),
+                state,
+                chosen.claim_ids.clone(),
+                claim_ids(bucket),
+                resolution_kind,
+            ),
+            source_kinds: source_kinds(bucket),
+        });
     }
 
     let Some(source_priority) = policy.source_priority_for(PropertyType::Liveness) else {
-        return Decision::Escalated(build_escalation(
-            bucket,
-            EscalationReason::NoResolutionPath,
-            build_candidate_values(PropertyType::Liveness, groups),
-            RecommendedAction::FixPolicy,
-            "policy does not define a resolution path for liveness".to_string(),
-        ));
+        return Decision::Escalated(EscalatedDecision {
+            escalation: build_escalation(
+                bucket,
+                EscalationReason::NoResolutionPath,
+                build_candidate_values(PropertyType::Liveness, groups),
+                RecommendedAction::FixPolicy,
+                "policy does not define a resolution path for liveness".to_string(),
+            ),
+            source_kinds: source_kinds(bucket),
+        });
     };
 
     let chosen = select_group_by_source_priority(groups, source_priority);
 
-    Decision::Resolved(build_canon_entry(
-        bucket,
-        policy,
-        chosen.canonical_value.clone(),
-        ConvergenceStateKind::Converging,
-        chosen.claim_ids.clone(),
-        claim_ids(bucket),
-        ResolutionKind::LivenessFold,
-    ))
+    Decision::Resolved(ResolvedDecision {
+        entry: build_canon_entry(
+            bucket,
+            policy,
+            chosen.canonical_value.clone(),
+            ConvergenceStateKind::Converging,
+            chosen.claim_ids.clone(),
+            claim_ids(bucket),
+            ResolutionKind::LivenessFold,
+        ),
+        source_kinds: source_kinds(bucket),
+    })
 }
 
 fn resolve_non_liveness(
@@ -155,16 +190,19 @@ fn resolve_non_liveness(
     groups: &[CandidateGroup],
 ) -> Decision {
     if groups.len() != 1 {
-        return Decision::Escalated(build_escalation(
-            bucket,
-            EscalationReason::NoResolutionPath,
-            build_candidate_values(property_type, groups),
-            RecommendedAction::FixPolicy,
-            format!(
-                "policy does not define a resolution path for {}",
-                property_type_name(property_type)
+        return Decision::Escalated(EscalatedDecision {
+            escalation: build_escalation(
+                bucket,
+                EscalationReason::NoResolutionPath,
+                build_candidate_values(property_type, groups),
+                RecommendedAction::FixPolicy,
+                format!(
+                    "policy does not define a resolution path for {}",
+                    property_type_name(property_type)
+                ),
             ),
-        ));
+            source_kinds: source_kinds(bucket),
+        });
     }
 
     let chosen = &groups[0];
@@ -182,41 +220,50 @@ fn resolve_non_liveness(
             )
         };
 
-        return Decision::Resolved(build_canon_entry(
-            bucket,
-            policy,
-            chosen.canonical_value.clone(),
-            state,
-            chosen.claim_ids.clone(),
-            claim_ids(bucket),
-            resolution_kind,
-        ));
+        return Decision::Resolved(ResolvedDecision {
+            entry: build_canon_entry(
+                bucket,
+                policy,
+                chosen.canonical_value.clone(),
+                state,
+                chosen.claim_ids.clone(),
+                claim_ids(bucket),
+                resolution_kind,
+            ),
+            source_kinds: source_kinds(bucket),
+        });
     }
 
     let Some(threshold) = policy.corroboration_threshold(property_type) else {
-        return Decision::Escalated(build_escalation(
-            bucket,
-            EscalationReason::NoResolutionPath,
-            build_candidate_values(property_type, groups),
-            RecommendedAction::FixPolicy,
-            format!(
-                "policy does not define a resolution path for {}",
-                property_type_name(property_type)
+        return Decision::Escalated(EscalatedDecision {
+            escalation: build_escalation(
+                bucket,
+                EscalationReason::NoResolutionPath,
+                build_candidate_values(property_type, groups),
+                RecommendedAction::FixPolicy,
+                format!(
+                    "policy does not define a resolution path for {}",
+                    property_type_name(property_type)
+                ),
             ),
-        ));
+            source_kinds: source_kinds(bucket),
+        });
     };
 
     if bucket.source_artifact_count() < threshold {
-        return Decision::Escalated(build_escalation(
-            bucket,
-            EscalationReason::MissingCorroboration,
-            build_candidate_values(property_type, groups),
-            RecommendedAction::ScanMore,
-            format!(
-                "need at least {threshold} corroborating sources, found {}",
-                bucket.source_artifact_count()
+        return Decision::Escalated(EscalatedDecision {
+            escalation: build_escalation(
+                bucket,
+                EscalationReason::MissingCorroboration,
+                build_candidate_values(property_type, groups),
+                RecommendedAction::ScanMore,
+                format!(
+                    "need at least {threshold} corroborating sources, found {}",
+                    bucket.source_artifact_count()
+                ),
             ),
-        ));
+            source_kinds: source_kinds(bucket),
+        });
     }
 
     let (state, resolution_kind) = if bucket.claim_count() == 1 {
@@ -231,15 +278,18 @@ fn resolve_non_liveness(
         )
     };
 
-    Decision::Resolved(build_canon_entry(
-        bucket,
-        policy,
-        chosen.canonical_value.clone(),
-        state,
-        chosen.claim_ids.clone(),
-        claim_ids(bucket),
-        resolution_kind,
-    ))
+    Decision::Resolved(ResolvedDecision {
+        entry: build_canon_entry(
+            bucket,
+            policy,
+            chosen.canonical_value.clone(),
+            state,
+            chosen.claim_ids.clone(),
+            claim_ids(bucket),
+            resolution_kind,
+        ),
+        source_kinds: source_kinds(bucket),
+    })
 }
 
 fn build_canon_entry(
@@ -297,6 +347,17 @@ fn claim_ids(bucket: &Bucket) -> Vec<String> {
         .iter()
         .map(|claim| claim.claim_id.clone())
         .collect()
+}
+
+fn source_kinds(bucket: &Bucket) -> Vec<SourceKind> {
+    let mut source_kinds = bucket
+        .claims
+        .iter()
+        .map(|claim| claim.source.kind)
+        .collect::<Vec<_>>();
+    source_kinds.sort_by_key(|kind| source_kind_name(*kind));
+    source_kinds.dedup();
+    source_kinds
 }
 
 fn candidate_groups(bucket: &Bucket, property_type: PropertyType) -> Vec<CandidateGroup> {
@@ -543,6 +604,14 @@ fn property_type_name(property_type: PropertyType) -> &'static str {
     }
 }
 
+fn source_kind_name(source_kind: SourceKind) -> &'static str {
+    match source_kind {
+        SourceKind::RepoScan => "repo_scan",
+        SourceKind::DbScan => "db_scan",
+        SourceKind::FileScan => "file_scan",
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ScalarStringValue {
@@ -588,7 +657,8 @@ mod tests {
         let decision = resolve_bucket(bucket, &policy);
         assert!(matches!(&decision, Decision::Resolved(_)));
 
-        if let Decision::Resolved(entry) = decision {
+        if let Decision::Resolved(decision) = decision {
+            let entry = decision.entry;
             assert_eq!(entry.property_type, PropertyType::Exists);
             assert_eq!(entry.canonical_value, json!(true));
             assert_eq!(entry.convergence.state, ConvergenceStateKind::SingleSource);
@@ -620,7 +690,8 @@ mod tests {
         let decision = resolve_bucket(bucket, &policy);
         assert!(matches!(&decision, Decision::Resolved(_)));
 
-        if let Decision::Resolved(entry) = decision {
+        if let Decision::Resolved(decision) = decision {
+            let entry = decision.entry;
             assert_eq!(entry.subject.kind, SubjectKind::Report);
             assert_eq!(
                 entry.canonical_value,
@@ -657,7 +728,8 @@ mod tests {
         let decision = resolve_bucket(bucket, &policy);
         assert!(matches!(&decision, Decision::Resolved(_)));
 
-        if let Decision::Resolved(entry) = decision {
+        if let Decision::Resolved(decision) = decision {
+            let entry = decision.entry;
             assert_eq!(entry.subject.kind, SubjectKind::Feed);
             assert_eq!(entry.canonical_value, json!("alive"));
             assert_eq!(entry.convergence.state, ConvergenceStateKind::Converging);
@@ -700,7 +772,8 @@ mod tests {
         let decision = resolve_bucket(bucket, &policy);
         assert!(matches!(&decision, Decision::Escalated(_)));
 
-        if let Decision::Escalated(escalation) = decision {
+        if let Decision::Escalated(decision) = decision {
+            let escalation = decision.escalation;
             assert_eq!(escalation.reason, EscalationReason::Conflicted);
             assert_eq!(escalation.recommended_action, RecommendedAction::Review);
             assert_eq!(
@@ -738,7 +811,8 @@ mod tests {
         let decision = resolve_bucket(bucket, &policy);
         assert!(matches!(&decision, Decision::Escalated(_)));
 
-        if let Decision::Escalated(escalation) = decision {
+        if let Decision::Escalated(decision) = decision {
+            let escalation = decision.escalation;
             assert_eq!(escalation.reason, EscalationReason::MissingCorroboration);
             assert_eq!(escalation.recommended_action, RecommendedAction::ScanMore);
             assert_eq!(
@@ -769,7 +843,8 @@ mod tests {
         let decision = resolve_bucket(bucket, &policy);
         assert!(matches!(&decision, Decision::Escalated(_)));
 
-        if let Decision::Escalated(escalation) = decision {
+        if let Decision::Escalated(decision) = decision {
+            let escalation = decision.escalation;
             assert_eq!(escalation.reason, EscalationReason::NoResolutionPath);
             assert_eq!(escalation.recommended_action, RecommendedAction::FixPolicy);
             assert_eq!(
