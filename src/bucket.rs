@@ -140,25 +140,22 @@ pub fn bucket_id(key: &BucketKey) -> String {
 #[derive(Debug, Default)]
 pub struct BucketStore {
     pub buckets: indexmap::IndexMap<String, Bucket>,
+    seen_claim_ids: BTreeSet<String>,
 }
 
 impl BucketStore {
     /// Insert a claim into the appropriate bucket, handling duplicate collapse.
     pub fn insert(&mut self, claim: Claim) {
+        if !self.seen_claim_ids.insert(claim.claim_id.clone()) {
+            return;
+        }
+
         let key = bucket_key_for(&claim);
         let id = bucket_id(&key);
 
         match self.buckets.entry(id.clone()) {
             Entry::Occupied(mut entry) => {
                 let bucket = entry.get_mut();
-                if bucket
-                    .claims
-                    .iter()
-                    .any(|existing| existing.claim_id == claim.claim_id)
-                {
-                    return;
-                }
-
                 bucket.claims.push(claim);
                 bucket.refresh_after_insert();
             }
@@ -327,5 +324,25 @@ mod tests {
         let bucket = store.buckets.values().next().unwrap();
         assert_eq!(bucket.claim_count(), 2);
         assert_eq!(bucket.source_artifact_count(), 1);
+    }
+
+    #[test]
+    fn bucket_store_collapses_duplicate_claim_ids_before_cross_bucket_insert() {
+        let mut store = BucketStore::default();
+        let first = parse_claim(mixed_source_fixture().lines().next().unwrap()).unwrap();
+        let duplicate_with_different_bucket = parse_claim(
+            r#"{"event":"claim.v0","claim_id":"sha256:1111111111111111111111111111111111111111111111111111111111111111","source":{"kind":"db_scan","scanner":"crucible.scan.db@0.1.0","artifact_id":"sha256:1616161616161616161616161616161616161616161616161616161616161616","locator":{"kind":"table_row","value":"ops.feed_registry#fdmee.actuals_load"}},"subject":{"kind":"feed","id":"fdmee.actuals_load"},"property_type":"liveness","value":{"kind":"scalar","value":"alive"},"confidence":0.94}"#,
+        )
+        .unwrap();
+
+        store.insert(first);
+        store.insert(duplicate_with_different_bucket);
+
+        assert_eq!(store.buckets.len(), 1);
+
+        let bucket = store.buckets.values().next().unwrap();
+        assert_eq!(bucket.state, BucketState::SingleSource);
+        assert_eq!(bucket.claim_count(), 1);
+        assert_eq!(bucket.key.property_type(), PropertyType::DependsOn);
     }
 }
