@@ -61,6 +61,8 @@ pub enum Outcome {
     Escalations,
     /// Refusal due to invalid input, policy, or contract violation.
     Refusal,
+    /// Operational error outside the refusal boundary.
+    Error,
 }
 
 impl Outcome {
@@ -68,7 +70,7 @@ impl Outcome {
         match self {
             Outcome::Clean => ExitCode::from(0),
             Outcome::Escalations => ExitCode::from(1),
-            Outcome::Refusal => ExitCode::from(2),
+            Outcome::Refusal | Outcome::Error => ExitCode::from(2),
         }
     }
 }
@@ -86,10 +88,16 @@ pub fn execute(cli: Cli) -> Result<Outcome, Box<dyn std::error::Error>> {
                 emit_success_status(&args, &summary)?;
                 Ok(summary.outcome)
             }
-            Err(error) => {
-                emit_refusal_status(&args, &error)?;
-                Ok(Outcome::Refusal)
-            }
+            Err(error) => match error.kind {
+                CliFailureKind::Refusal => {
+                    emit_refusal_status(&args, &error)?;
+                    Ok(Outcome::Refusal)
+                }
+                CliFailureKind::Error => {
+                    emit_error_status(&args, &error)?;
+                    Ok(Outcome::Error)
+                }
+            },
         },
     }
 }
@@ -103,12 +111,27 @@ struct ExecutionSummary {
 
 #[derive(Debug)]
 struct CliFailure {
+    kind: CliFailureKind,
     reason: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CliFailureKind {
+    Refusal,
+    Error,
+}
+
 impl CliFailure {
-    fn new(reason: impl Into<String>) -> Self {
+    fn refusal(reason: impl Into<String>) -> Self {
         Self {
+            kind: CliFailureKind::Refusal,
+            reason: reason.into(),
+        }
+    }
+
+    fn error(reason: impl Into<String>) -> Self {
+        Self {
+            kind: CliFailureKind::Error,
             reason: reason.into(),
         }
     }
@@ -124,10 +147,12 @@ impl std::error::Error for CliFailure {}
 
 fn execute_archaeology(args: &ArchaeologyArgs) -> Result<ExecutionSummary, CliFailure> {
     let policy = load_policy(&args.policy).map_err(|error| {
-        CliFailure::new(format!(
-            "failed to load policy `{}`: {error}",
-            args.policy.display()
-        ))
+        let message = format!("failed to load policy `{}`: {error}", args.policy.display());
+        if error.reason.starts_with("failed to read policy `") {
+            CliFailure::error(message)
+        } else {
+            CliFailure::refusal(message)
+        }
     })?;
     let claims = load_claims(&args.claims)?;
 
@@ -171,7 +196,7 @@ fn load_claims(paths: &[PathBuf]) -> Result<Vec<Claim>, CliFailure> {
 
     for path in paths {
         let file = File::open(path).map_err(|error| {
-            CliFailure::new(format!(
+            CliFailure::error(format!(
                 "failed to open claims file `{}`: {error}",
                 path.display()
             ))
@@ -180,7 +205,7 @@ fn load_claims(paths: &[PathBuf]) -> Result<Vec<Claim>, CliFailure> {
 
         for (line_index, line_result) in reader.lines().enumerate() {
             let line = line_result.map_err(|error| {
-                CliFailure::new(format!(
+                CliFailure::error(format!(
                     "failed to read claims file `{}` line {}: {error}",
                     path.display(),
                     line_index + 1
@@ -192,7 +217,7 @@ fn load_claims(paths: &[PathBuf]) -> Result<Vec<Claim>, CliFailure> {
             }
 
             let claim = parse_claim(trimmed).map_err(|error| {
-                CliFailure::new(format!(
+                CliFailure::refusal(format!(
                     "failed to parse claims file `{}` line {}: {error}",
                     path.display(),
                     line_index + 1
@@ -214,14 +239,14 @@ fn write_canon_entries(
     for decision in decisions {
         if let Decision::Resolved(resolved) = decision {
             write_canon_entry(&mut writer, &resolved.entry).map_err(|error| {
-                CliFailure::new(format!("failed to write canon entries: {error}"))
+                CliFailure::error(format!("failed to write canon entries: {error}"))
             })?;
         }
     }
 
     writer
         .flush()
-        .map_err(|error| CliFailure::new(format!("failed to flush canon output: {error}")))?;
+        .map_err(|error| CliFailure::error(format!("failed to flush canon output: {error}")))?;
 
     Ok(())
 }
@@ -238,14 +263,14 @@ fn write_escalations(
     for decision in decisions {
         if let Decision::Escalated(escalated) = decision {
             write_escalation(&mut writer, &escalated.escalation).map_err(|error| {
-                CliFailure::new(format!("failed to write escalations: {error}"))
+                CliFailure::error(format!("failed to write escalations: {error}"))
             })?;
         }
     }
 
-    writer
-        .flush()
-        .map_err(|error| CliFailure::new(format!("failed to flush escalation output: {error}")))?;
+    writer.flush().map_err(|error| {
+        CliFailure::error(format!("failed to flush escalation output: {error}"))
+    })?;
 
     Ok(())
 }
@@ -261,16 +286,17 @@ fn write_convergence_report(
     let mut writer = create_writer(Some(path))?;
     let report = generate_report(policy_id, decisions);
 
-    serde_json::to_writer(&mut writer, &report)
-        .map_err(|error| CliFailure::new(format!("failed to write convergence report: {error}")))?;
+    serde_json::to_writer(&mut writer, &report).map_err(|error| {
+        CliFailure::error(format!("failed to write convergence report: {error}"))
+    })?;
     writer.write_all(b"\n").map_err(|error| {
-        CliFailure::new(format!(
+        CliFailure::error(format!(
             "failed to finalize convergence report output: {error}"
         ))
     })?;
-    writer
-        .flush()
-        .map_err(|error| CliFailure::new(format!("failed to flush convergence output: {error}")))?;
+    writer.flush().map_err(|error| {
+        CliFailure::error(format!("failed to flush convergence output: {error}"))
+    })?;
 
     Ok(())
 }
@@ -280,7 +306,7 @@ fn create_writer(path: Option<&PathBuf>) -> Result<Box<dyn Write>, CliFailure> {
         Some(path) => File::create(path)
             .map(|file| Box::new(file) as Box<dyn Write>)
             .map_err(|error| {
-                CliFailure::new(format!(
+                CliFailure::error(format!(
                     "failed to create output `{}`: {error}",
                     path.display()
                 ))
@@ -298,6 +324,7 @@ fn emit_success_status(
             Outcome::Clean => "clean",
             Outcome::Escalations => "escalations",
             Outcome::Refusal => "refusal",
+            Outcome::Error => "error",
         };
         writeln!(
             io::stderr(),
@@ -335,6 +362,26 @@ fn emit_refusal_status(
         )?;
     } else {
         writeln!(io::stderr(), "refusal: {}", error.reason)?;
+    }
+
+    Ok(())
+}
+
+fn emit_error_status(
+    args: &ArchaeologyArgs,
+    error: &CliFailure,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if args.json {
+        writeln!(
+            io::stderr(),
+            "{}",
+            serde_json::json!({
+                "status": "error",
+                "reason": error.reason,
+            })
+        )?;
+    } else {
+        writeln!(io::stderr(), "error: {}", error.reason)?;
     }
 
     Ok(())
@@ -396,5 +443,25 @@ mod tests {
         .unwrap();
 
         assert!(matches!(outcome, Outcome::Refusal));
+    }
+
+    #[test]
+    fn output_write_failures_map_to_error_outcome() {
+        let temp_dir = TempDir::new().unwrap();
+        let missing_parent = temp_dir.path().join("missing").join("canon.jsonl");
+
+        let outcome = execute(Cli {
+            command: Command::Archaeology(ArchaeologyArgs {
+                claims: vec![claims_fixture_path("mixed_source.jsonl")],
+                policy: policy_fixture_path("legacy.decode.v0.json"),
+                output: Some(missing_parent),
+                escalations: None,
+                convergence: None,
+                json: true,
+            }),
+        })
+        .unwrap();
+
+        assert!(matches!(outcome, Outcome::Error));
     }
 }
