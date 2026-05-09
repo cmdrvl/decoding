@@ -551,6 +551,20 @@ Exit codes:
 
 Do not ship a broader CLI in Phase 1.
 
+The only accepted diagnostic exception is read-only doctor mode:
+
+```text
+decoding doctor health [--json]
+decoding doctor capabilities [--json]
+decoding doctor robot-docs
+decoding doctor --robot-triage
+```
+
+Doctor mode is not part of the archaeology domain surface. It must return
+before claim loading, policy loading, bucketing, resolution, and artifact
+writing. It must not parse catalog records, read derived claim files, write
+`.doctor/`, or offer `doctor --fix`.
+
 ---
 
 ## Build order

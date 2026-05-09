@@ -6,3 +6,6 @@
 
 # br local history
 .beads/.br_history/
+
+# Doctor-mode run artifacts
+.doctor/

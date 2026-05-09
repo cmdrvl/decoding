@@ -305,6 +305,8 @@ cargo build --release
 
 ```
 decoding archaeology <CLAIMS>... --policy <FILE> [OPTIONS]
+decoding doctor <health|capabilities|robot-docs> [--json]
+decoding doctor --robot-triage
 ```
 
 ### Arguments
@@ -322,6 +324,19 @@ decoding archaeology <CLAIMS>... --policy <FILE> [OPTIONS]
 | `--escalations <FILE>` | string | *(none)* | Escalation JSONL output |
 | `--convergence <FILE>` | string | *(none)* | Convergence report JSON output |
 | `--json` | flag | `false` | JSON status messages on stderr |
+
+### Doctor Mode
+
+`decoding doctor` is a read-only diagnostic surface for operators and headless agents. It does not read claim files, policy files, output paths, stdin, or `.doctor/`, and it does not enter the archaeology resolver.
+
+| Command | Output | Description |
+|---------|--------|-------------|
+| `decoding doctor health [--json]` | human or JSON | Health and read-only safety checks |
+| `decoding doctor capabilities [--json]` | human or JSON | Supported command and contract metadata |
+| `decoding doctor robot-docs` | human text | Deterministic operating notes for agents |
+| `decoding doctor --robot-triage` | JSON | Prioritized next actions and failure-mode hints |
+
+`doctor --fix` is intentionally absent. Any mutation-capable doctor mode needs a separate detector, backup, inverse, fixture, and undo design.
 
 ### Exit Codes
 

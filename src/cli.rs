@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use crate::bucket::BucketStore;
 use crate::contracts::claim::{Claim, parse_claim};
 use crate::contracts::policy::load_policy;
+use crate::doctor;
 use crate::render::{write_canon_entry, write_escalation};
 use crate::report::generate_report;
 use crate::resolve::{Decision, resolve_bucket};
@@ -23,6 +24,8 @@ pub struct Cli {
 pub enum Command {
     /// Converge archaeology claims into canonical entries and escalations.
     Archaeology(ArchaeologyArgs),
+    /// Inspect decoding health and capabilities without reading or writing claim data.
+    Doctor(DoctorArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -48,6 +51,33 @@ pub struct ArchaeologyArgs {
     pub convergence: Option<PathBuf>,
 
     /// Emit JSON status messages on stderr.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct DoctorArgs {
+    /// Emit machine-readable triage guidance for headless agents.
+    #[arg(long)]
+    pub robot_triage: bool,
+
+    #[command(subcommand)]
+    pub command: Option<DoctorCommand>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum DoctorCommand {
+    /// Report read-only health status.
+    Health(DoctorOutputArgs),
+    /// Describe supported commands, contracts, and safety envelope.
+    Capabilities(DoctorOutputArgs),
+    /// Print deterministic operator documentation for agents.
+    RobotDocs,
+}
+
+#[derive(Args, Debug, Clone, Copy, Default)]
+pub struct DoctorOutputArgs {
+    /// Emit JSON instead of human-readable text.
     #[arg(long)]
     pub json: bool,
 }
@@ -99,6 +129,7 @@ pub fn execute(cli: Cli) -> Result<Outcome, Box<dyn std::error::Error>> {
                 }
             },
         },
+        Command::Doctor(args) => doctor::execute(&args),
     }
 }
 
