@@ -48,7 +48,7 @@ fn write_canonical_json(output: &mut String, value: &serde_json::Value) {
             output.push('{');
 
             let mut entries: Vec<_> = map.iter().collect();
-            entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+            entries.sort_unstable_by_key(|(key, _)| *key);
 
             for (index, (key, item)) in entries.into_iter().enumerate() {
                 if index > 0 {
