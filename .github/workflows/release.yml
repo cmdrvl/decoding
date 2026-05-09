@@ -1,135 +1,310 @@
-name: release
+name: Release Build Matrix
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
-    inputs:
-      ref:
-        description: Git ref to build
-        required: true
-        default: main
-      release_tag:
-        description: Tag name to publish; leave blank to build artifacts only
-        required: false
-        default: ""
+  push:
+    branches: ["main"]
+    paths: ["Cargo.toml"]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: release-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+  group: release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      build_ref: ${{ steps.meta.outputs.build_ref }}
-      release_tag: ${{ steps.meta.outputs.release_tag }}
-      release_version: ${{ steps.meta.outputs.release_version }}
-      publish_release: ${{ steps.meta.outputs.publish_release }}
-    steps:
-      - id: meta
-        shell: bash
-        run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            build_ref="${{ inputs.ref }}"
-            if [[ -n "${{ inputs.release_tag }}" ]]; then
-              release_tag="${{ inputs.release_tag }}"
-              release_version="${{ inputs.release_tag }}"
-              publish_release=true
-            else
-              release_tag=""
-              release_version="manual-${GITHUB_RUN_NUMBER}"
-              publish_release=false
-            fi
-          else
-            build_ref="${GITHUB_SHA}"
-            release_tag="${GITHUB_REF_NAME}"
-            release_version="${GITHUB_REF_NAME}"
-            publish_release=true
-          fi
-
-          {
-            echo "build_ref=${build_ref}"
-            echo "release_tag=${release_tag}"
-            echo "release_version=${release_version}"
-            echo "publish_release=${publish_release}"
-          } >> "$GITHUB_OUTPUT"
-
-  build:
-    needs: prepare
+  build-artifacts:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            asset_suffix: linux
-            binary_ext: ""
-          - os: macos-latest
-            asset_suffix: macos
-            binary_ext: ""
-          - os: windows-latest
-            asset_suffix: windows
-            binary_ext: ".exe"
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive_ext: tar.gz
+            bin: decoding
+            strip: linux
+            use_cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive_ext: tar.gz
+            bin: decoding
+            strip: linux-cross
+            use_cross: true
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+            archive_ext: tar.gz
+            bin: decoding
+            strip: macos
+            use_cross: false
+          - target: aarch64-apple-darwin
+            os: macos-14
+            archive_ext: tar.gz
+            bin: decoding
+            strip: macos
+            use_cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive_ext: zip
+            bin: decoding.exe
+            strip: none
+            use_cross: false
+
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.build_ref }}
 
-      - name: Install stable toolchain
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Restore cargo cache
-        uses: Swatinem/rust-cache@v2
         with:
-          shared-key: release-stable
+          targets: ${{ matrix.target }}
 
-      - name: Build release binary
-        run: cargo build --release --locked
+      - uses: Swatinem/rust-cache@v2
 
-      - id: package
+      - name: Install cross
+        if: matrix.use_cross
+        uses: taiki-e/install-action@cross
+
+      - name: Read version
+        id: version
         shell: bash
         run: |
-          artifact_name="decoding-${{ needs.prepare.outputs.release_version }}-${{ matrix.asset_suffix }}${{ matrix.binary_ext }}"
-          mkdir -p dist
-          cp "target/release/decoding${{ matrix.binary_ext }}" "dist/${artifact_name}"
-          echo "artifact_name=${artifact_name}" >> "$GITHUB_OUTPUT"
-          echo "artifact_path=dist/${artifact_name}" >> "$GITHUB_OUTPUT"
+          version=$(python3 - <<'PY'
+          import tomllib
+          from pathlib import Path
+          data = tomllib.loads(Path('Cargo.toml').read_text())
+          print(f"v{data['package']['version']}")
+          PY
+          )
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Upload build artifact
+      - name: Build (cross)
+        if: matrix.use_cross
+        run: cross build --release --locked --target ${{ matrix.target }}
+
+      - name: Build (cargo)
+        if: matrix.use_cross == false
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Strip binary (linux)
+        if: matrix.strip == 'linux'
+        run: |
+          if command -v strip >/dev/null; then
+            strip target/${{ matrix.target }}/release/${{ matrix.bin }}
+          else
+            echo "strip not available; skipping"
+          fi
+
+      - name: Strip binary (macos)
+        if: matrix.strip == 'macos'
+        run: |
+          if command -v strip >/dev/null; then
+            strip -x target/${{ matrix.target }}/release/${{ matrix.bin }}
+          else
+            echo "strip not available; skipping"
+          fi
+
+      - name: Install cross-strip toolchain
+        if: matrix.strip == 'linux-cross'
+        run: sudo apt-get update && sudo apt-get install -y binutils-aarch64-linux-gnu
+
+      - name: Strip binary (linux cross)
+        if: matrix.strip == 'linux-cross'
+        run: aarch64-linux-gnu-strip target/${{ matrix.target }}/release/${{ matrix.bin }}
+
+      - name: Package archive (unix)
+        if: matrix.archive_ext == 'tar.gz'
+        shell: bash
+        run: |
+          dist_dir="dist/${{ matrix.target }}"
+          mkdir -p "$dist_dir"
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "$dist_dir/decoding"
+          cp README.md "$dist_dir/"
+          if [ -f LICENSE ]; then
+            cp LICENSE "$dist_dir/"
+          fi
+          tar -czf "decoding-${{ steps.version.outputs.version }}-${{ matrix.target }}.tar.gz" -C "$dist_dir" .
+
+      - name: Package archive (windows)
+        if: matrix.archive_ext == 'zip'
+        shell: pwsh
+        run: |
+          $dist = "dist/${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.bin }}" "$dist\\decoding.exe"
+          Copy-Item README.md $dist
+          if (Test-Path LICENSE) {
+            Copy-Item LICENSE $dist
+          }
+          Compress-Archive -Path "$dist\\*" -DestinationPath "decoding-${{ steps.version.outputs.version }}-${{ matrix.target }}.zip" -Force
+
+      - name: Upload archive
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.package.outputs.artifact_name }}
-          path: ${{ steps.package.outputs.artifact_path }}
+          name: decoding-${{ steps.version.outputs.version }}-${{ matrix.target }}
+          path: decoding-${{ steps.version.outputs.version }}-${{ matrix.target }}.${{ matrix.archive_ext }}
           if-no-files-found: error
+          retention-days: 7
 
-  publish:
-    needs:
-      - prepare
-      - build
-    if: needs.prepare.outputs.publish_release == 'true'
+  release:
+    name: Release artifacts
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    needs: build-artifacts
+    permissions:
+      contents: write
+      id-token: write
+    timeout-minutes: 15
     steps:
-      - name: Download release artifacts
+      - uses: actions/checkout@v4
+
+      - name: Fetch tags
+        run: git fetch --tags
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(python3 - <<'PY'
+          import tomllib
+          from pathlib import Path
+          data = tomllib.loads(Path('Cargo.toml').read_text())
+          print(f"v{data['package']['version']}")
+          PY
+          )
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag if missing
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          version="${{ steps.version.outputs.version }}"
+          if git rev-parse --verify --quiet "refs/tags/$version" >/dev/null; then
+            tag_sha="$(git rev-list -n 1 "$version")"
+            if [ "$tag_sha" != "$GITHUB_SHA" ]; then
+              echo "Tag $version already exists at $tag_sha, current commit is $GITHUB_SHA."
+              echo "Refusing to republish artifacts for an existing version tag."
+              echo "Bump Cargo.toml package.version to cut a new immutable release."
+              exit 1
+            fi
+            echo "Tag $version already points to current commit; reusing it."
+          else
+            git tag -a "$version" -m "Release $version"
+            git push origin "$version"
+          fi
+
+      - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
-      - name: Publish GitHub release
+      - name: Generate SHA256SUMS
+        run: |
+          cd dist
+          find . -maxdepth 1 -type f \( -name "decoding-*.tar.gz" -o -name "decoding-*.zip" \) -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            | sed 's|  \./|  |' > SHA256SUMS
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign SHA256SUMS
+        run: |
+          cosign sign-blob --yes \
+            --output-signature dist/SHA256SUMS.sig \
+            --output-certificate dist/SHA256SUMS.pem \
+            dist/SHA256SUMS
+
+      - name: Install cargo-cyclonedx
+        uses: taiki-e/install-action@cargo-cyclonedx
+
+      - name: Generate SBOM
+        run: |
+          cargo cyclonedx --format json --override-filename sbom.cdx
+          mv sbom.cdx.json dist/sbom.cdx.json
+
+      - name: Generate provenance
+        run: |
+          python3 - <<'PY'
+          import datetime
+          import json
+          import os
+          import pathlib
+
+          dist = pathlib.Path("dist")
+          sums = (dist / "SHA256SUMS").read_text().strip().splitlines()
+          subjects = []
+          for line in sums:
+            digest, name = line.split(maxsplit=1)
+            subjects.append({
+              "name": name,
+              "digest": {"sha256": digest},
+            })
+
+          now = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+          statement = {
+            "_type": "https://in-toto.io/Statement/v1",
+            "subject": subjects,
+            "predicateType": "https://slsa.dev/provenance/v1",
+            "predicate": {
+              "buildDefinition": {
+                "buildType": "https://github.com/actions/runner",
+                "externalParameters": {
+                  "workflow": "release.yml",
+                  "ref": os.environ.get("GITHUB_REF"),
+                  "sha": os.environ.get("GITHUB_SHA"),
+                },
+                "internalParameters": {},
+                "resolvedDependencies": [],
+              },
+              "runDetails": {
+                "builder": {
+                  "id": f"https://github.com/{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/{os.environ.get('GITHUB_RUN_ID')}"
+                },
+                "metadata": {
+                  "invocationId": os.environ.get("GITHUB_RUN_ID"),
+                  "startedOn": now,
+                  "finishedOn": now,
+                },
+              },
+            },
+          }
+
+          (dist / "provenance.intoto.jsonl").write_text(json.dumps(statement) + "\n")
+          PY
+
+      - name: Upload release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.prepare.outputs.release_tag }}
-          target_commitish: ${{ needs.prepare.outputs.build_ref }}
-          files: dist/*
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          body: |
+            This release packages `${{ steps.version.outputs.version }}` for all supported targets.
+
+            ## Verification
+
+            ```bash
+            sha256sum -c SHA256SUMS
+            cosign verify-blob \
+              --certificate-identity "https://github.com/cmdrvl/decoding/.github/workflows/release.yml@refs/heads/main" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              --certificate SHA256SUMS.pem \
+              --signature SHA256SUMS.sig \
+              SHA256SUMS
+            ```
+
+            The macOS and Linux archives use per-target names and checksums suitable for a future Homebrew formula.
           generate_release_notes: true
-          fail_on_unmatched_files: true
+          files: |
+            dist/decoding-*.tar.gz
+            dist/decoding-*.zip
+            dist/SHA256SUMS
+            dist/SHA256SUMS.sig
+            dist/SHA256SUMS.pem
+            dist/provenance.intoto.jsonl
+            dist/sbom.cdx.json

@@ -9,7 +9,7 @@
 **Multiple legacy systems claim conflicting things about the same entity. decoding settles it.**
 
 ```bash
-brew install cmdrvl/tap/decoding
+decoding archaeology claims/*.jsonl --policy legacy.decode.v0.json
 ```
 
 </div>
@@ -280,17 +280,21 @@ Phase 1 freezes a small, stable property vocabulary:
 
 ## Installation
 
-### Homebrew (Recommended)
+### Release Archives
 
-```bash
-brew install cmdrvl/tap/decoding
-```
+Prebuilt archives are attached to GitHub releases. Each release publishes the Homebrew-ready per-target matrix:
 
-### Shell Script
+- `decoding-vX.Y.Z-aarch64-apple-darwin.tar.gz`
+- `decoding-vX.Y.Z-x86_64-apple-darwin.tar.gz`
+- `decoding-vX.Y.Z-aarch64-unknown-linux-gnu.tar.gz`
+- `decoding-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz`
+- `decoding-vX.Y.Z-x86_64-pc-windows-msvc.zip`
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/cmdrvl/decoding/main/scripts/install.sh | bash
-```
+Use `SHA256SUMS` to verify archive checksums. Releases also attach `SHA256SUMS.sig`, `SHA256SUMS.pem`, `sbom.cdx.json`, and `provenance.intoto.jsonl`.
+
+### Homebrew
+
+`decoding` is not published to `cmdrvl/tap` yet. The macOS and Linux release archives are named and checksummed so a future formula can select the correct target-specific asset.
 
 ### From Source
 
@@ -508,7 +512,7 @@ By design, `dead` should never auto-win from absence alone. If a subject is mark
 | `tests/output_snapshots.rs` | Locked output snapshot tests |
 | `tests/fixtures/` | Claim fixtures, policy fixtures, expected outputs |
 | `.github/workflows/ci.yml` | Fast quality-gate CI (fmt + clippy + test) |
-| `.github/workflows/release.yml` | Tagged release workflow (Linux + macOS + Windows) |
+| `.github/workflows/release.yml` | Cargo.toml-triggered per-target release matrix with checksums, signing, SBOM, and provenance |
 | `.github/workflows/smoke.yml` | CLI smoke tests with runtime metrics |
 | `docs/PLAN_DECODING.md` | Full implementation spec |
 
@@ -535,11 +539,11 @@ Current work should improve one of:
 
 ## Roadmap
 
-Completed in v0.1.0:
+Current baseline:
 
 - All Phase 1 modules implemented (contracts, bucketing, comparators, resolver, outputs)
 - CI quality-gate workflow
-- Tagged release workflow with cross-platform binaries
+- Homebrew-ready per-target release workflow
 - CLI smoke tests
 - 75+ tests with snapshot locking
 
