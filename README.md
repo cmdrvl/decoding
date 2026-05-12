@@ -1,5 +1,9 @@
 # decoding
 
+![decoding: deterministic convergence over claims. A painterly dashboard showing three sources making conflicting claims about feed.RT_INTAKE (feed scanner says alive, etl logs say stale, partner manifest declares structural dependencies). The three streams enter a glass prism labeled CONVERGENCE which produces a canonical entry (accepted, with explanation) and an escalation queue (requires review, with conflict reason). Three handwritten data folders on the desk show the actually-disagreeing entries from each source. Two more folders alongside hold the canonical output and the review queue of 8 items.](docs/images/decoding.webp)
+
+> *Three systems disagree. One canonical answer comes out. The other two get audited.*
+
 <div align="center">
 
 [![CI](https://github.com/cmdrvl/decoding/actions/workflows/ci.yml/badge.svg)](https://github.com/cmdrvl/decoding/actions/workflows/ci.yml)
@@ -619,3 +623,7 @@ cargo test
 ## License
 
 MIT
+
+---
+
+*`decoding` is part of the open-source toolchain from the [CMD+RVL](https://cmdrvl.com) lineage and AI enablement practice. MIT-licensed. Contributions welcome from any practice or stack.*
