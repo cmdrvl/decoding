@@ -7,6 +7,7 @@ pub mod contracts;
 pub mod doctor;
 pub mod fixtures;
 pub mod normalize;
+pub mod paths;
 pub mod render;
 pub mod report;
 pub mod resolve;

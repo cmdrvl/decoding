@@ -333,6 +333,23 @@ decoding doctor --robot-triage
 | `--convergence <FILE>` | string | *(none)* | Convergence report JSON output |
 | `--json` | flag | `false` | JSON status messages on stderr |
 
+### Managed Paths
+
+`decoding` has no managed home or repo-local config, state, cache, receipt, log,
+or lock path in the current inventory. It does not auto-create a local config
+file. The canonical CMD+RVL root is still `~/.cmdrvl/`; if a future managed
+path is added, its migration ledger and deprecation notices belong at
+`~/.cmdrvl/migrations/applied.jsonl` and
+`~/.cmdrvl/notices/deprecated-paths.jsonl`.
+
+Current artifact routing is explicit:
+
+- `canon_entry.v0` defaults to stdout unless `--output <FILE>` is supplied.
+- `escalation.v0` is written only when `--escalations <FILE>` is supplied.
+- `convergence.v0` is written only when `--convergence <FILE>` is supplied.
+- The current inventory has no legacy decoding-managed paths to copy or
+  deprecate.
+
 ### Doctor Mode
 
 `decoding doctor` is a read-only diagnostic surface for operators and headless agents. It does not read claim files, policy files, output paths, stdin, or `.doctor/`, and it does not enter the archaeology resolver.

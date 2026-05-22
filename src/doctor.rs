@@ -5,6 +5,7 @@ use std::io::{self, Write};
 use serde_json::{Value, json};
 
 use crate::cli::{DoctorArgs, DoctorCommand, Outcome};
+use crate::paths::config_footprint;
 
 const CONTRACT: &str = "cmdrvl.read_only_doctor.v1";
 const HEALTH_SCHEMA: &str = "decoding.doctor.health.v1";
@@ -54,6 +55,7 @@ fn write_human_health() -> Result<(), Box<dyn std::error::Error>> {
     writeln!(stdout, "contract: {CONTRACT}")?;
     writeln!(stdout, "version: {}", env!("CARGO_PKG_VERSION"))?;
     writeln!(stdout, "read_only: true")?;
+    writeln!(stdout, "config_root: {}", crate::paths::CANONICAL_ROOT)?;
     writeln!(stdout, "fix_available: false")?;
     writeln!(stdout, "claim_loaders_entered: false")?;
     writeln!(stdout, "policy_loaders_entered: false")?;
@@ -65,6 +67,7 @@ fn write_human_capabilities() -> Result<(), Box<dyn std::error::Error>> {
     let mut stdout = io::stdout().lock();
     writeln!(stdout, "decoding doctor capabilities")?;
     writeln!(stdout, "contract: {CONTRACT}")?;
+    writeln!(stdout, "config_root: {}", crate::paths::CANONICAL_ROOT)?;
     writeln!(stdout, "commands:")?;
     writeln!(stdout, "  decoding doctor health [--json]")?;
     writeln!(stdout, "  decoding doctor capabilities [--json]")?;
@@ -114,6 +117,7 @@ fn health_report() -> Value {
         "status": "healthy",
         "healthy": true,
         "tool": tool_identity(),
+        "config_footprint": config_footprint(),
         "checks": [
             {
                 "id": "cli_loaded",
@@ -153,6 +157,7 @@ fn capabilities_report() -> Value {
         "schema": CAPABILITIES_SCHEMA,
         "contract": CONTRACT,
         "tool": tool_identity(),
+        "config_footprint": config_footprint(),
         "commands": [
             {
                 "command": "decoding doctor health",
@@ -206,6 +211,7 @@ fn robot_triage_report() -> Value {
         "status": "healthy",
         "healthy": true,
         "tool": tool_identity(),
+        "config_footprint": config_footprint(),
         "recommended_actions": [
             {
                 "priority": 1,
@@ -334,6 +340,18 @@ mod tests {
                 .and_then(Value::as_bool),
             Some(false)
         );
+        assert_eq!(
+            report
+                .pointer("/config_footprint/canonical_root")
+                .and_then(Value::as_str),
+            Some("~/.cmdrvl")
+        );
+        assert_eq!(
+            report
+                .pointer("/config_footprint/legacy_migration_required")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
     }
 
     #[test]
@@ -351,6 +369,13 @@ mod tests {
                 .pointer("/core_command/output_contracts/0")
                 .and_then(Value::as_str),
             Some("canon_entry.v0")
+        );
+        assert_eq!(
+            report
+                .pointer("/config_footprint/managed_state_paths")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0)
         );
     }
 
@@ -375,6 +400,12 @@ mod tests {
                     .iter()
                     .any(|mode| mode.get("classification").and_then(Value::as_str)
                         == Some("escalation")))
+        );
+        assert_eq!(
+            report
+                .pointer("/config_footprint/deprecation_notices")
+                .and_then(Value::as_str),
+            Some("~/.cmdrvl/notices/deprecated-paths.jsonl")
         );
     }
 }

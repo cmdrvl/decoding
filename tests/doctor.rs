@@ -27,6 +27,15 @@ fn doctor_health_json_is_read_only() -> Result<(), Box<dyn std::error::Error>> {
 
     assert_eq!(report["schema"], "decoding.doctor.health.v1");
     assert_eq!(report["healthy"], true);
+    assert_eq!(report["config_footprint"]["canonical_root"], "~/.cmdrvl");
+    assert_eq!(
+        report["config_footprint"]["legacy_paths"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        report["config_footprint"]["legacy_migration_required"],
+        false
+    );
     assert_eq!(
         report["observed_inputs"]["claims"]
             .as_array()
@@ -52,6 +61,14 @@ fn doctor_capabilities_json_describes_contracts() -> Result<(), Box<dyn std::err
 
     assert_eq!(report["schema"], "decoding.doctor.capabilities.v1");
     assert_eq!(report["fix_mode"]["available"], false);
+    assert_eq!(
+        report["config_footprint"]["managed_config_paths"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        report["config_footprint"]["deprecation_notices"],
+        "~/.cmdrvl/notices/deprecated-paths.jsonl"
+    );
     assert_eq!(report["core_command"]["input_contract"], "claim.v0");
     assert_eq!(
         report["core_command"]["output_contracts"][2],
@@ -66,6 +83,10 @@ fn doctor_robot_triage_json_lists_agent_actions() -> Result<(), Box<dyn std::err
 
     assert_eq!(report["schema"], "decoding.doctor.triage.v1");
     assert_eq!(report["status"], "healthy");
+    assert_eq!(
+        report["config_footprint"]["migration_log"],
+        "~/.cmdrvl/migrations/applied.jsonl"
+    );
     assert!(report["recommended_actions"].as_array().unwrap().len() >= 3);
     assert_eq!(report["side_effects"]["resolves_claims"], false);
     Ok(())

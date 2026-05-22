@@ -565,6 +565,22 @@ before claim loading, policy loading, bucketing, resolution, and artifact
 writing. It must not parse catalog records, read derived claim files, write
 `.doctor/`, or offer `doctor --fix`.
 
+### Config footprint
+
+The current code inventory has no decoding-managed home or repo-local config,
+state, cache, receipt, log, or lock path. `canon_entry.v0` defaults to stdout,
+and `--output`, `--escalations`, and `--convergence` write only to explicit
+operator-supplied paths.
+
+The canonical CMD+RVL root remains `~/.cmdrvl/` for any future managed path.
+Migration and deprecation records belong under:
+
+- `~/.cmdrvl/migrations/applied.jsonl`
+- `~/.cmdrvl/notices/deprecated-paths.jsonl`
+
+No first-run copy is required for this version because there are no legacy
+decoding-managed paths in the inventory.
+
 ---
 
 ## Build order
