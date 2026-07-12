@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::vocabulary::{PropertyType, SourceKind, SubjectRef, ValueRef};
+use super::vocabulary::{NumericScalarValue, PropertyType, SourceKind, SubjectRef, ValueRef};
 
 /// A derived claim from a crucible scan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +153,28 @@ fn validate_value_shape(property_type: PropertyType, value: &Value) -> Result<()
             }
 
             let _value_count = string_set.values.len();
+
+            Ok(())
+        }
+        PropertyType::NumericScalar => {
+            let numeric: NumericScalarValue =
+                serde_json::from_value(value.clone()).map_err(|error| {
+                    ClaimRefusal::new(format!(
+                        "numeric_scalar value must be a numeric_scalar object: {error}"
+                    ))
+                })?;
+
+            if !numeric.is_valid_kind() {
+                return Err(ClaimRefusal::new(
+                    "numeric_scalar value must use kind=numeric_scalar",
+                ));
+            }
+
+            if !numeric.value.is_finite() {
+                return Err(ClaimRefusal::new(
+                    "numeric_scalar value must be a finite number",
+                ));
+            }
 
             Ok(())
         }
@@ -323,6 +345,14 @@ mod tests {
             reason,
             "liveness value must be one of alive, dead, stale, or unknown"
         );
+    }
+
+    #[test]
+    fn parse_claim_rejects_invalid_numeric_scalar_values() {
+        let line = r#"{"event":"claim.v0","claim_id":"sha256:dcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdc","source":{"kind":"sec_xbrl","scanner":"crucible.scan.sec@0.1.0","artifact_id":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","locator":{"kind":"fact","value":"us-gaap:InvestmentsAtFairValue"}},"subject":{"kind":"fund","id":"ares.2026_q1"},"property_type":"numeric_scalar","value":{"kind":"scalar","value":29499.3,"scale":"millions"},"confidence":0.98}"#;
+
+        let reason = refusal_reason(line);
+        assert_eq!(reason, "numeric_scalar value must use kind=numeric_scalar");
     }
 
     #[test]

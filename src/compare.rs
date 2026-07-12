@@ -1,6 +1,7 @@
 //! Property-aware comparator registry and liveness fold logic.
 
-use crate::contracts::vocabulary::{PropertyType, ValueRef};
+use crate::contracts::policy::NumericTolerance;
+use crate::contracts::vocabulary::{NumericScalarValue, PropertyType, ValueRef};
 use crate::normalize::{canonical_json, normalize_string, sorted_set};
 use serde::Deserialize;
 
@@ -17,6 +18,16 @@ pub fn compare(
     a: &serde_json::Value,
     b: &serde_json::Value,
 ) -> Compatibility {
+    compare_with_numeric_tolerance(property_type, a, b, None)
+}
+
+/// Compare two claim values, using a numeric tolerance when the property needs one.
+pub fn compare_with_numeric_tolerance(
+    property_type: PropertyType,
+    a: &serde_json::Value,
+    b: &serde_json::Value,
+    numeric_tolerance: Option<&NumericTolerance>,
+) -> Compatibility {
     match property_type {
         PropertyType::Exists => compare_exists(a, b),
         PropertyType::Schema | PropertyType::Constraint | PropertyType::Schedule => {
@@ -28,6 +39,7 @@ pub fn compare(
         | PropertyType::UsedBy
         | PropertyType::AuthoritativeFor => compare_value_refs(a, b),
         PropertyType::ValidValues => compare_valid_values(a, b),
+        PropertyType::NumericScalar => compare_numeric_scalars(a, b, numeric_tolerance),
         PropertyType::SemanticLabel => compare_semantic_labels(a, b),
         PropertyType::Liveness => liveness_fold(a, b),
     }
@@ -86,6 +98,27 @@ fn compare_valid_values(a: &serde_json::Value, b: &serde_json::Value) -> Compati
     }
 }
 
+fn compare_numeric_scalars(
+    a: &serde_json::Value,
+    b: &serde_json::Value,
+    tolerance: Option<&NumericTolerance>,
+) -> Compatibility {
+    let Some(left) = parse_numeric_amount(a) else {
+        return Compatibility::Incompatible;
+    };
+    let Some(right) = parse_numeric_amount(b) else {
+        return Compatibility::Incompatible;
+    };
+
+    if amounts_equal(left, right)
+        || tolerance.is_some_and(|tolerance| within_tolerance(left, right, tolerance))
+    {
+        Compatibility::Compatible
+    } else {
+        Compatibility::Incompatible
+    }
+}
+
 fn compare_semantic_labels(a: &serde_json::Value, b: &serde_json::Value) -> Compatibility {
     match (parse_scalar_string(a), parse_scalar_string(b)) {
         (Some(left), Some(right)) if normalize_string(&left) == normalize_string(&right) => {
@@ -106,6 +139,39 @@ fn parse_string_set(value: &serde_json::Value) -> Option<Vec<String>> {
     }
 
     Some(sorted_set(&string_set.values))
+}
+
+fn parse_numeric_amount(value: &serde_json::Value) -> Option<f64> {
+    let numeric: NumericScalarValue = serde_json::from_value(value.clone()).ok()?;
+    if !numeric.is_valid_kind() || !numeric.value.is_finite() {
+        return None;
+    }
+
+    Some(numeric.normalized_amount())
+}
+
+fn amounts_equal(left: f64, right: f64) -> bool {
+    let scale = left.abs().max(right.abs()).max(1.0);
+    (left - right).abs() <= f64::EPSILON * scale * 16.0
+}
+
+fn within_tolerance(left: f64, right: f64, tolerance: &NumericTolerance) -> bool {
+    let diff = (left - right).abs();
+
+    if tolerance.absolute.is_some_and(|absolute| diff <= absolute) {
+        return true;
+    }
+
+    let Some(relative_percent) = tolerance.relative_percent else {
+        return false;
+    };
+
+    let denominator = left.abs().max(right.abs());
+    if denominator == 0.0 {
+        amounts_equal(left, right)
+    } else {
+        diff / denominator <= relative_percent / 100.0
+    }
 }
 
 fn parse_liveness_state(value: &serde_json::Value) -> Option<LivenessState> {
@@ -153,7 +219,8 @@ enum LivenessState {
 mod tests {
     use serde_json::json;
 
-    use super::{Compatibility, compare, liveness_fold};
+    use super::{Compatibility, compare, compare_with_numeric_tolerance, liveness_fold};
+    use crate::contracts::policy::NumericTolerance;
     use crate::contracts::vocabulary::PropertyType;
 
     #[test]
@@ -244,6 +311,41 @@ mod tests {
                 PropertyType::ValidValues,
                 &json!({"kind":"string_set","values":["alpha", "gamma"]}),
                 &json!({"kind":"string_set","values":["alpha", "beta"]}),
+            ),
+            Compatibility::Incompatible
+        );
+    }
+
+    #[test]
+    fn numeric_scalars_normalize_scale_and_apply_tolerance() {
+        let tolerance = NumericTolerance {
+            relative_percent: Some(0.01),
+            absolute: Some(1_000_000.0),
+        };
+
+        assert_eq!(
+            compare(
+                PropertyType::NumericScalar,
+                &json!({"kind":"numeric_scalar","value":29499.3,"scale":"millions"}),
+                &json!({"kind":"numeric_scalar","value":29499300000.0,"scale":"dollars"}),
+            ),
+            Compatibility::Compatible
+        );
+        assert_eq!(
+            compare_with_numeric_tolerance(
+                PropertyType::NumericScalar,
+                &json!({"kind":"numeric_scalar","value":29499.3,"scale":"millions"}),
+                &json!({"kind":"numeric_scalar","value":29499.0,"scale":"millions"}),
+                Some(&tolerance),
+            ),
+            Compatibility::Compatible
+        );
+        assert_eq!(
+            compare_with_numeric_tolerance(
+                PropertyType::NumericScalar,
+                &json!({"kind":"numeric_scalar","value":2280.0,"scale":"millions"}),
+                &json!({"kind":"numeric_scalar","value":4190.0,"scale":"millions"}),
+                Some(&tolerance),
             ),
             Compatibility::Incompatible
         );

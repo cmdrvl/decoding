@@ -147,16 +147,22 @@ A declarative policy file controls resolution behavior:
   "auto_resolve": ["exists", "schema", "constraint"],
   "min_corroboration": {
     "reads": 2, "writes": 2, "depends_on": 2, "used_by": 2,
-    "schedule": 2, "valid_values": 2, "semantic_label": 2, "authoritative_for": 2
+    "schedule": 2, "valid_values": 2, "numeric_scalar": 2,
+    "semantic_label": 2, "authoritative_for": 2
+  },
+  "numeric_tolerance": {
+    "numeric_scalar": { "relative_percent": 0.01, "absolute": 1000000 }
   },
   "source_priority": {
-    "liveness": ["db_scan", "file_scan", "repo_scan"]
+    "liveness": ["db_scan", "file_scan", "repo_scan"],
+    "numeric_scalar": ["sec_xbrl", "dera", "balance_sheet", "parser_extraction"]
   }
 }
 ```
 
 - **Auto-resolve** — structural properties (`exists`, `schema`, `constraint`) resolve with a single high-confidence claim
 - **Min corroboration** — behavioral and semantic properties need multiple compatible claims
+- **Numeric tolerance** — financial scalar claims compare after scale normalization, using configured absolute or relative tolerance
 - **Source priority** — liveness uses source-type ranking when claims are compatible but varied
 
 ### Comparators
@@ -169,6 +175,7 @@ Each property type has a frozen compatibility rule:
 | `schema` | Normalized JSON deep-equal |
 | `reads`, `writes`, `depends_on`, `used_by`, `authoritative_for` | Same subject ref |
 | `valid_values` | Same sorted set of strings |
+| `numeric_scalar` | Same normalized amount within configured absolute or relative tolerance |
 | `semantic_label` | Same normalized string |
 | `liveness` | Same state, or `alive` + `stale`, or `stale` + `unknown` |
 
@@ -254,6 +261,7 @@ Phase 1 freezes a small, stable property vocabulary:
 | `used_by` | table, column, view, report | Downstream usage |
 | `schedule` | job, feed | Cadence or trigger info |
 | `valid_values` | column, mapping | Allowed values |
+| `numeric_scalar` | fund, holding line, report line | Numeric amount with scale normalization |
 | `semantic_label` | column, report line, mapping | Business meaning hint |
 | `liveness` | all | Alive, dead, stale, unknown |
 | `authoritative_for` | report, extract, consumer | Authoritative output hint |
@@ -278,7 +286,7 @@ Phase 1 freezes a small, stable property vocabulary:
 **When decoding is not the right tool:**
 - Direct observations (table existence, file inventory) — use the metadata catalog
 - Entity resolution across naming variants — use `canon org`
-- Financial claim resolution — deferred after Phase 1
+- Broader financial claim cascade machinery beyond numeric-scalar convergence — deferred after Phase 1
 
 ---
 

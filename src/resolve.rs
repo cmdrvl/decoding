@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::bucket::Bucket;
-use crate::compare::{Compatibility, compare};
+use crate::compare::{Compatibility, compare, compare_with_numeric_tolerance};
 use crate::contracts::canon_entry::{
     CanonEntry, ConvergenceState, ConvergenceStateKind, Explanation, ResolutionKind,
 };
@@ -13,10 +13,10 @@ use crate::contracts::escalation::{
     ScalarCandidateValue,
 };
 use crate::contracts::policy::Policy;
-use crate::contracts::vocabulary::{PropertyType, SourceKind, ValueRef};
+use crate::contracts::vocabulary::{NumericScalarValue, PropertyType, SourceKind, ValueRef};
 use crate::normalize::{canonical_json, normalize_string, sorted_set};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Number, Value, json};
 
 /// The decision produced for a single bucket after resolution.
 #[derive(Debug)]
@@ -57,9 +57,9 @@ pub fn resolve_bucket(bucket: &Bucket, policy: &Policy) -> Decision {
     }
 
     let property_type = bucket.key.property_type();
-    let groups = candidate_groups(bucket, property_type);
+    let groups = candidate_groups(bucket, property_type, policy);
 
-    if has_incompatible_claims(bucket, property_type) {
+    if has_incompatible_claims(bucket, property_type, policy) {
         return Decision::Escalated(EscalatedDecision {
             escalation: build_escalation(
                 bucket,
@@ -88,6 +88,9 @@ struct CandidateGroup {
     claim_ids: Vec<String>,
     source_artifact_ids: BTreeSet<String>,
     source_kinds: Vec<SourceKind>,
+    raw_values: Vec<serde_json::Value>,
+    selection_rank: usize,
+    selection_claim_id: String,
 }
 
 impl CandidateGroup {
@@ -365,7 +368,15 @@ fn source_kinds(bucket: &Bucket) -> Vec<SourceKind> {
     source_kinds
 }
 
-fn candidate_groups(bucket: &Bucket, property_type: PropertyType) -> Vec<CandidateGroup> {
+fn candidate_groups(
+    bucket: &Bucket,
+    property_type: PropertyType,
+    policy: &Policy,
+) -> Vec<CandidateGroup> {
+    if property_type == PropertyType::NumericScalar {
+        return numeric_candidate_groups(bucket, policy);
+    }
+
     let mut groups = BTreeMap::<String, CandidateGroup>::new();
 
     for claim in &bucket.claims {
@@ -387,6 +398,7 @@ fn candidate_groups(bucket: &Bucket, property_type: PropertyType) -> Vec<Candida
                     group.display_key = display_key;
                     group.display_value = display_value;
                 }
+                group.raw_values.push(claim.value.clone());
             }
             None => {
                 let mut source_artifact_ids = BTreeSet::new();
@@ -401,6 +413,9 @@ fn candidate_groups(bucket: &Bucket, property_type: PropertyType) -> Vec<Candida
                         claim_ids: vec![claim.claim_id.clone()],
                         source_artifact_ids,
                         source_kinds: vec![claim.source.kind],
+                        raw_values: vec![claim.value.clone()],
+                        selection_rank: usize::MAX,
+                        selection_claim_id: claim.claim_id.clone(),
                     },
                 );
             }
@@ -412,6 +427,91 @@ fn candidate_groups(bucket: &Bucket, property_type: PropertyType) -> Vec<Candida
         group.claim_ids.sort_unstable();
     }
     groups
+}
+
+fn numeric_candidate_groups(bucket: &Bucket, policy: &Policy) -> Vec<CandidateGroup> {
+    let mut groups = Vec::<CandidateGroup>::new();
+    let tolerance = policy.numeric_tolerance_for(PropertyType::NumericScalar);
+    let source_priority = policy.source_priority_for(PropertyType::NumericScalar);
+
+    for claim in &bucket.claims {
+        let Some(canonical_value) =
+            canonical_output_value(PropertyType::NumericScalar, &claim.value)
+        else {
+            continue;
+        };
+        let display_value = canonical_value.clone();
+        let canonical_key = canonical_json(&canonical_value);
+        let display_key = canonical_json(&display_value);
+        let selection_rank = numeric_selection_rank(claim.source.kind, source_priority);
+
+        if let Some(group) = groups.iter_mut().find(|group| {
+            group.raw_values.iter().all(|group_value| {
+                compare_with_numeric_tolerance(
+                    PropertyType::NumericScalar,
+                    &claim.value,
+                    group_value,
+                    tolerance,
+                ) == Compatibility::Compatible
+            })
+        }) {
+            group.claim_ids.push(claim.claim_id.clone());
+            group
+                .source_artifact_ids
+                .insert(claim.source.artifact_id.clone());
+            group.source_kinds.push(claim.source.kind);
+            group.raw_values.push(claim.value.clone());
+
+            if numeric_claim_selection_key(selection_rank, &claim.claim_id)
+                < numeric_claim_selection_key(group.selection_rank, &group.selection_claim_id)
+            {
+                group.canonical_key = canonical_key;
+                group.canonical_value = canonical_value;
+                group.display_key = display_key;
+                group.display_value = display_value;
+                group.selection_rank = selection_rank;
+                group.selection_claim_id = claim.claim_id.clone();
+            }
+        } else {
+            let mut source_artifact_ids = BTreeSet::new();
+            source_artifact_ids.insert(claim.source.artifact_id.clone());
+            groups.push(CandidateGroup {
+                canonical_key,
+                canonical_value,
+                display_value,
+                display_key,
+                claim_ids: vec![claim.claim_id.clone()],
+                source_artifact_ids,
+                source_kinds: vec![claim.source.kind],
+                raw_values: vec![claim.value.clone()],
+                selection_rank,
+                selection_claim_id: claim.claim_id.clone(),
+            });
+        }
+    }
+
+    for group in &mut groups {
+        group.claim_ids.sort_unstable();
+    }
+    groups.sort_by(|left, right| left.canonical_key.cmp(&right.canonical_key));
+    groups
+}
+
+fn numeric_selection_rank(
+    source_kind: SourceKind,
+    source_priority: Option<&[SourceKind]>,
+) -> usize {
+    source_priority
+        .and_then(|source_priority| {
+            source_priority
+                .iter()
+                .position(|candidate| *candidate == source_kind)
+        })
+        .unwrap_or(usize::MAX)
+}
+
+fn numeric_claim_selection_key(rank: usize, claim_id: &str) -> (usize, &str) {
+    (rank, claim_id)
 }
 
 fn build_candidate_values(
@@ -441,10 +541,21 @@ fn candidate_value(property_type: PropertyType, value: &serde_json::Value) -> Ca
     }
 }
 
-fn has_incompatible_claims(bucket: &Bucket, property_type: PropertyType) -> bool {
+fn has_incompatible_claims(bucket: &Bucket, property_type: PropertyType, policy: &Policy) -> bool {
     for (index, left) in bucket.claims.iter().enumerate() {
         for right in bucket.claims.iter().skip(index + 1) {
-            if compare(property_type, &left.value, &right.value) == Compatibility::Incompatible {
+            let compatibility = if property_type == PropertyType::NumericScalar {
+                compare_with_numeric_tolerance(
+                    property_type,
+                    &left.value,
+                    &right.value,
+                    policy.numeric_tolerance_for(property_type),
+                )
+            } else {
+                compare(property_type, &left.value, &right.value)
+            };
+
+            if compatibility == Compatibility::Incompatible {
                 return true;
             }
         }
@@ -558,6 +669,7 @@ fn canonical_output_value(
             .ok()
             .and_then(|value_ref| serde_json::to_value(value_ref).ok()),
         PropertyType::ValidValues => parse_string_set(value).map(|values| json!(values)),
+        PropertyType::NumericScalar => numeric_scalar_output_value(value),
         PropertyType::SemanticLabel | PropertyType::Liveness => {
             parse_scalar_string(value).map(|scalar| json!(normalize_string(&scalar)))
         }
@@ -581,6 +693,7 @@ fn display_output_value(
             .ok()
             .and_then(|value_ref| serde_json::to_value(value_ref).ok()),
         PropertyType::ValidValues => parse_string_set(value).map(|values| json!(values)),
+        PropertyType::NumericScalar => numeric_scalar_output_value(value),
         PropertyType::SemanticLabel => parse_scalar_string(value)
             .map(|scalar| serde_json::Value::String(scalar.trim().to_string())),
         PropertyType::Liveness => {
@@ -614,6 +727,24 @@ fn parse_string_set(value: &serde_json::Value) -> Option<Vec<String>> {
     Some(sorted_set(&string_set.values))
 }
 
+fn numeric_scalar_output_value(value: &serde_json::Value) -> Option<serde_json::Value> {
+    let numeric: NumericScalarValue = serde_json::from_value(value.clone()).ok()?;
+    if !numeric.is_valid_kind() || !numeric.value.is_finite() {
+        return None;
+    }
+
+    let amount = Number::from_f64(numeric.normalized_amount())?;
+    let mut output = serde_json::Map::new();
+    output.insert(
+        "kind".to_string(),
+        Value::String("numeric_scalar".to_string()),
+    );
+    output.insert("scale".to_string(), Value::String("dollars".to_string()));
+    output.insert("value".to_string(), Value::Number(amount));
+
+    Some(Value::Object(output))
+}
+
 fn is_dead_value(value: &serde_json::Value) -> bool {
     matches!(value, serde_json::Value::String(state) if state == "dead")
 }
@@ -642,6 +773,7 @@ fn property_type_name(property_type: PropertyType) -> &'static str {
         PropertyType::UsedBy => "used_by",
         PropertyType::Schedule => "schedule",
         PropertyType::ValidValues => "valid_values",
+        PropertyType::NumericScalar => "numeric_scalar",
         PropertyType::SemanticLabel => "semantic_label",
         PropertyType::Liveness => "liveness",
         PropertyType::AuthoritativeFor => "authoritative_for",
@@ -653,6 +785,10 @@ fn source_kind_name(source_kind: SourceKind) -> &'static str {
         SourceKind::RepoScan => "repo_scan",
         SourceKind::DbScan => "db_scan",
         SourceKind::FileScan => "file_scan",
+        SourceKind::SecXbrl => "sec_xbrl",
+        SourceKind::Dera => "dera",
+        SourceKind::ParserExtraction => "parser_extraction",
+        SourceKind::BalanceSheet => "balance_sheet",
     }
 }
 
@@ -844,6 +980,93 @@ mod tests {
     }
 
     #[test]
+    fn resolves_tolerant_numeric_scalar_from_fixture() {
+        let store = mixed_source_store();
+        let policy = load_policy_fixture("legacy.decode.v0.json").unwrap();
+        let bucket = fixture_bucket(&store, "ares.2026_q1", PropertyType::NumericScalar);
+
+        let decision = resolve_bucket(bucket, &policy);
+        assert!(matches!(&decision, Decision::Resolved(_)));
+
+        if let Decision::Resolved(decision) = decision {
+            let entry = decision.entry;
+            assert_eq!(entry.subject.kind, SubjectKind::Fund);
+            assert_eq!(
+                entry.canonical_value,
+                json!({
+                    "kind": "numeric_scalar",
+                    "scale": "dollars",
+                    "value": 29499300000.0
+                })
+            );
+            assert_eq!(entry.convergence.state, ConvergenceStateKind::Converged);
+            assert_eq!(entry.convergence.source_count, 3);
+            assert_eq!(entry.convergence.claim_count, 3);
+            assert_eq!(entry.explain.resolution_kind, ResolutionKind::Corroborated);
+            assert_eq!(
+                entry.explain.winner_claim_ids,
+                vec![
+                    "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+                        .to_string(),
+                    "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+                        .to_string(),
+                    "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                        .to_string(),
+                ]
+            );
+            assert_eq!(
+                entry.explain.compatible_claim_ids,
+                entry.explain.winner_claim_ids
+            );
+        }
+    }
+
+    #[test]
+    fn escalates_conflicted_numeric_scalar_outside_tolerance() {
+        let mut store = BucketStore::default();
+        store.insert(
+            parse_claim(r#"{"event":"claim.v0","claim_id":"sha256:1111111111111111111111111111111111111111111111111111111111111111","source":{"kind":"sec_xbrl","scanner":"crucible.scan.sec_xbrl@0.1.0","artifact_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","locator":{"kind":"fact","value":"carlyle.2026_q1#investments_at_fair_value"}},"subject":{"kind":"fund","id":"carlyle.2026_q1"},"property_type":"numeric_scalar","value":{"kind":"numeric_scalar","value":2280.0,"scale":"millions"},"confidence":0.98}"#).unwrap(),
+        );
+        store.insert(
+            parse_claim(r#"{"event":"claim.v0","claim_id":"sha256:2222222222222222222222222222222222222222222222222222222222222222","source":{"kind":"parser_extraction","scanner":"cmdrvl.soi.parser@0.1.0","artifact_id":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","locator":{"kind":"table_cell","value":"carlyle.2026_q1#total_investments_fair_value"}},"subject":{"kind":"fund","id":"carlyle.2026_q1"},"property_type":"numeric_scalar","value":{"kind":"numeric_scalar","value":4190.0,"scale":"millions"},"confidence":0.82}"#).unwrap(),
+        );
+
+        let policy = load_policy_fixture("legacy.decode.v0.json").unwrap();
+        let bucket = store.buckets.values().next().unwrap();
+
+        let decision = resolve_bucket(bucket, &policy);
+        assert!(matches!(&decision, Decision::Escalated(_)));
+
+        if let Decision::Escalated(decision) = decision {
+            let escalation = decision.escalation;
+            assert_eq!(escalation.reason, EscalationReason::Conflicted);
+            assert_eq!(escalation.recommended_action, RecommendedAction::Review);
+            assert_eq!(
+                escalation.candidate_values,
+                vec![
+                    CandidateValue::Scalar(ScalarCandidateValue {
+                        kind: ScalarCandidateKind::Scalar,
+                        value: json!({
+                            "kind": "numeric_scalar",
+                            "scale": "dollars",
+                            "value": 2280000000.0
+                        }),
+                    }),
+                    CandidateValue::Scalar(ScalarCandidateValue {
+                        kind: ScalarCandidateKind::Scalar,
+                        value: json!({
+                            "kind": "numeric_scalar",
+                            "scale": "dollars",
+                            "value": 4190000000.0
+                        }),
+                    }),
+                ]
+            );
+            assert_eq!(escalation.summary, "2 incompatible candidate values remain");
+        }
+    }
+
+    #[test]
     fn escalates_conflicted_semantic_label_bucket() {
         let store = mixed_source_store();
         let policy = load_policy_fixture("legacy.decode.v0.json").unwrap();
@@ -922,6 +1145,7 @@ mod tests {
             auto_resolve: vec![],
             min_corroboration: IndexMap::new(),
             source_priority: IndexMap::new(),
+            numeric_tolerance: IndexMap::new(),
         };
 
         let decision = resolve_bucket(bucket, &policy);

@@ -9,6 +9,10 @@ pub enum SourceKind {
     RepoScan,
     DbScan,
     FileScan,
+    SecXbrl,
+    Dera,
+    ParserExtraction,
+    BalanceSheet,
 }
 
 /// Known subject kinds for Phase 1.
@@ -27,6 +31,8 @@ pub enum SubjectKind {
     Artifact,
     Extract,
     ReportLine,
+    Fund,
+    HoldingLine,
 }
 
 /// Frozen Phase 1 property types.
@@ -42,6 +48,7 @@ pub enum PropertyType {
     UsedBy,
     Schedule,
     ValidValues,
+    NumericScalar,
     SemanticLabel,
     Liveness,
     AuthoritativeFor,
@@ -77,6 +84,46 @@ pub struct ValueRef {
     pub id: String,
 }
 
+/// A numeric scalar value with explicit financial scale.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NumericScalarValue {
+    pub kind: String,
+    pub value: f64,
+    pub scale: NumericScale,
+}
+
+impl NumericScalarValue {
+    pub fn is_valid_kind(&self) -> bool {
+        self.kind == "numeric_scalar"
+    }
+
+    pub fn normalized_amount(&self) -> f64 {
+        self.value * self.scale.factor()
+    }
+}
+
+/// Explicit scale for numeric scalar values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NumericScale {
+    Dollars,
+    Thousands,
+    Millions,
+    Billions,
+}
+
+impl NumericScale {
+    fn factor(self) -> f64 {
+        match self {
+            Self::Dollars => 1.0,
+            Self::Thousands => 1_000.0,
+            Self::Millions => 1_000_000.0,
+            Self::Billions => 1_000_000_000.0,
+        }
+    }
+}
+
 impl From<SubjectRef> for ValueRef {
     fn from(subject: SubjectRef) -> Self {
         Self {
@@ -99,12 +146,15 @@ impl From<ValueRef> for SubjectRef {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{PropertyType, SourceKind, SubjectKind, SubjectRef, ValueRef};
+    use super::{
+        NumericScalarValue, NumericScale, PropertyType, SourceKind, SubjectKind, SubjectRef,
+        ValueRef,
+    };
 
     #[test]
     fn source_kind_accepts_frozen_values() {
-        let parsed: SourceKind = serde_json::from_str("\"repo_scan\"").unwrap();
-        assert_eq!(parsed, SourceKind::RepoScan);
+        let parsed: SourceKind = serde_json::from_str("\"sec_xbrl\"").unwrap();
+        assert_eq!(parsed, SourceKind::SecXbrl);
     }
 
     #[test]
@@ -115,8 +165,8 @@ mod tests {
 
     #[test]
     fn subject_kind_accepts_frozen_values() {
-        let parsed: SubjectKind = serde_json::from_str("\"report_line\"").unwrap();
-        assert_eq!(parsed, SubjectKind::ReportLine);
+        let parsed: SubjectKind = serde_json::from_str("\"holding_line\"").unwrap();
+        assert_eq!(parsed, SubjectKind::HoldingLine);
     }
 
     #[test]
@@ -127,8 +177,8 @@ mod tests {
 
     #[test]
     fn property_type_accepts_frozen_values() {
-        let parsed: PropertyType = serde_json::from_str("\"authoritative_for\"").unwrap();
-        assert_eq!(parsed, PropertyType::AuthoritativeFor);
+        let parsed: PropertyType = serde_json::from_str("\"numeric_scalar\"").unwrap();
+        assert_eq!(parsed, PropertyType::NumericScalar);
     }
 
     #[test]
@@ -164,15 +214,18 @@ mod tests {
 
     #[test]
     fn source_kind_deserializes_in_priority_lists() {
-        let parsed: HashMap<PropertyType, Vec<SourceKind>> =
-            serde_json::from_str(r#"{"liveness":["db_scan","file_scan","repo_scan"]}"#).unwrap();
+        let parsed: HashMap<PropertyType, Vec<SourceKind>> = serde_json::from_str(
+            r#"{"numeric_scalar":["sec_xbrl","dera","balance_sheet","parser_extraction"]}"#,
+        )
+        .unwrap();
 
         assert_eq!(
-            parsed.get(&PropertyType::Liveness),
+            parsed.get(&PropertyType::NumericScalar),
             Some(&vec![
-                SourceKind::DbScan,
-                SourceKind::FileScan,
-                SourceKind::RepoScan,
+                SourceKind::SecXbrl,
+                SourceKind::Dera,
+                SourceKind::BalanceSheet,
+                SourceKind::ParserExtraction,
             ])
         );
     }
@@ -183,5 +236,16 @@ mod tests {
         assert!(PropertyType::AuthoritativeFor.is_edge());
         assert!(!PropertyType::Schema.is_edge());
         assert!(!PropertyType::Liveness.is_edge());
+    }
+
+    #[test]
+    fn numeric_scalar_value_normalizes_scale_to_dollars() {
+        let parsed: NumericScalarValue =
+            serde_json::from_str(r#"{"kind":"numeric_scalar","value":29499.3,"scale":"millions"}"#)
+                .unwrap();
+
+        assert!(parsed.is_valid_kind());
+        assert_eq!(parsed.scale, NumericScale::Millions);
+        assert_eq!(parsed.normalized_amount(), 29_499_300_000.0);
     }
 }

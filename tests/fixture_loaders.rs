@@ -51,6 +51,17 @@ fn loads_shared_policy_fixture() {
         Some(2)
     );
     assert_eq!(
+        policy.corroboration_threshold(PropertyType::NumericScalar),
+        Some(2)
+    );
+    assert_eq!(
+        policy
+            .numeric_tolerance_for(PropertyType::NumericScalar)
+            .unwrap()
+            .relative_percent,
+        Some(0.01)
+    );
+    assert_eq!(
         policy
             .source_priority_for(PropertyType::Liveness)
             .unwrap()

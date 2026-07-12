@@ -133,7 +133,7 @@ mod tests {
     fn load_claim_fixture_lines_reads_non_empty_lines() {
         let lines = load_claim_fixture_lines("mixed_source.jsonl").unwrap();
 
-        assert_eq!(lines.len(), 12);
+        assert_eq!(lines.len(), 15);
         assert!(
             lines
                 .iter()
@@ -145,7 +145,7 @@ mod tests {
     fn load_claim_fixture_parses_typed_claims() {
         let claims = load_claim_fixture("mixed_source.jsonl").unwrap();
 
-        assert_eq!(claims.len(), 12);
+        assert_eq!(claims.len(), 15);
         assert_eq!(claims[0].property_type, PropertyType::DependsOn);
         assert_eq!(claims[3].property_type, PropertyType::Liveness);
     }

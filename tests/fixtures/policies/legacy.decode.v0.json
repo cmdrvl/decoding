@@ -8,10 +8,18 @@
     "used_by": 2,
     "schedule": 2,
     "valid_values": 2,
+    "numeric_scalar": 2,
     "semantic_label": 2,
     "authoritative_for": 2
   },
   "source_priority": {
-    "liveness": ["db_scan", "file_scan", "repo_scan"]
+    "liveness": ["db_scan", "file_scan", "repo_scan"],
+    "numeric_scalar": ["sec_xbrl", "dera", "balance_sheet", "parser_extraction"]
+  },
+  "numeric_tolerance": {
+    "numeric_scalar": {
+      "relative_percent": 0.01,
+      "absolute": 1000000
+    }
   }
 }

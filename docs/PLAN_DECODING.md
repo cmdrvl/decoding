@@ -298,12 +298,24 @@ Initial property types:
 | `used_by` | table, column, view, report | downstream usage |
 | `schedule` | job, feed | cadence or trigger info |
 | `valid_values` | column, mapping | allowed values |
+| `numeric_scalar` | fund, holding line, report line | numeric amount with scale normalization |
 | `semantic_label` | column, report line, mapping | business meaning hint |
 | `liveness` | all | alive, dead, stale, unknown |
 | `authoritative_for` | report, extract, consumer | authoritative output hint |
 
 This list may grow, but Phase 1 should freeze a versioned vocabulary before
 code starts.
+
+Frozen financial claim additions:
+
+- `source.kind`: `sec_xbrl`, `dera`, `parser_extraction`, and
+  `balance_sheet` are accepted alongside the archaeology scanner source kinds.
+- `subject.kind`: `fund` and `holding_line` are accepted for financial-value
+  adjudication.
+- `numeric_scalar` values use
+  `{"kind":"numeric_scalar","value":<number>,"scale":"dollars|thousands|millions|billions"}`.
+  Compatibility and canonical output compare the value after scale
+  normalization to dollars. Scale is explicit; claims that omit it are refused.
 
 ### Value compatibility rules
 
@@ -321,6 +333,7 @@ compatibility rules before code starts:
 | `used_by` | same subject ref |
 | `schedule` | normalized JSON deep-equal |
 | `valid_values` | same sorted set of strings |
+| `numeric_scalar` | normalized numeric values are within configured absolute or relative tolerance |
 | `semantic_label` | same normalized string |
 | `liveness` | same state, or `alive` + `stale`, or `stale` + `unknown` |
 | `authoritative_for` | same subject ref |
@@ -351,6 +364,7 @@ These should normally require multiple compatible claims:
 - `used_by`
 - `schedule`
 - `valid_values`
+- `numeric_scalar`
 - `semantic_label`
 - `authoritative_for`
 
@@ -510,18 +524,28 @@ Phase 1 also needs a frozen minimal policy contract:
     "used_by": 2,
     "schedule": 2,
     "valid_values": 2,
+    "numeric_scalar": 2,
     "semantic_label": 2,
     "authoritative_for": 2
   },
   "source_priority": {
-    "liveness": ["db_scan", "file_scan", "repo_scan"]
+    "liveness": ["db_scan", "file_scan", "repo_scan"],
+    "numeric_scalar": ["sec_xbrl", "dera", "balance_sheet", "parser_extraction"]
+  },
+  "numeric_tolerance": {
+    "numeric_scalar": {
+      "relative_percent": 0.01,
+      "absolute": 1000000
+    }
   }
 }
 ```
 
 Phase 1 policy should remain declarative and small. If the engine needs
-property-specific code beyond the comparator registry and liveness fold, the
-policy surface is too ambitious.
+property-specific code beyond the comparator registry, numeric tolerance, and
+liveness fold, the policy surface is too ambitious. Numeric `absolute`
+tolerance is measured after scale normalization to dollars. Numeric
+`relative_percent` is a percent value, so `0.01` means one basis point.
 
 ---
 

@@ -7,14 +7,18 @@ expression: report
     "authoritative_for": 1,
     "depends_on": 1,
     "liveness": 1,
+    "numeric_scalar": 1,
     "schedule": 1,
     "semantic_label": 1,
     "valid_values": 1
   },
   "by_source_kind": {
+    "balance_sheet": 1,
     "db_scan": 3,
     "file_scan": 5,
-    "repo_scan": 4
+    "parser_extraction": 1,
+    "repo_scan": 4,
+    "sec_xbrl": 1
   },
   "event": "convergence.v0",
   "policy_id": "legacy.decode.v0",
@@ -54,9 +58,9 @@ expression: report
     }
   ],
   "totals": {
-    "buckets": 6,
+    "buckets": 7,
     "conflicted": 1,
-    "converged": 2,
+    "converged": 3,
     "converging": 1,
     "escalated": 3,
     "single_source": 0

@@ -109,6 +109,7 @@ fn property_type_name(property_type: PropertyType) -> &'static str {
         PropertyType::UsedBy => "used_by",
         PropertyType::Schedule => "schedule",
         PropertyType::ValidValues => "valid_values",
+        PropertyType::NumericScalar => "numeric_scalar",
         PropertyType::SemanticLabel => "semantic_label",
         PropertyType::Liveness => "liveness",
         PropertyType::AuthoritativeFor => "authoritative_for",
@@ -120,6 +121,10 @@ fn source_kind_name(source_kind: SourceKind) -> &'static str {
         SourceKind::RepoScan => "repo_scan",
         SourceKind::DbScan => "db_scan",
         SourceKind::FileScan => "file_scan",
+        SourceKind::SecXbrl => "sec_xbrl",
+        SourceKind::Dera => "dera",
+        SourceKind::ParserExtraction => "parser_extraction",
+        SourceKind::BalanceSheet => "balance_sheet",
     }
 }
 

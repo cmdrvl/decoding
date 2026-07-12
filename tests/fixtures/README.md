@@ -7,8 +7,8 @@ Use these files to exercise the frozen contract surface without coupling tests t
 ## Files
 
 - `claims/mixed_source.jsonl`
-  - Valid `claim.v0` corpus with 12 claims from `repo_scan`, `db_scan`, and `file_scan`.
-  - Covers converging edge claims, converging schedule claims, compatible `liveness` evidence, conflicting `semantic_label` claims, and single-source `valid_values` / `authoritative_for` claims.
+  - Valid `claim.v0` corpus with 15 claims from archaeology scanners plus financial-value sources.
+  - Covers converging edge claims, converging schedule claims, compatible `liveness` evidence, tolerant `numeric_scalar` convergence, conflicting `semantic_label` claims, and single-source `valid_values` / `authoritative_for` claims.
   - Intended for mixed-source fixture tests, replay determinism, bucketing, corroboration, and escalation coverage.
 
 - `claims/refusal_invalid.jsonl`

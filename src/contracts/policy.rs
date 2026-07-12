@@ -18,6 +18,15 @@ pub struct Policy {
     pub auto_resolve: Vec<PropertyType>,
     pub min_corroboration: IndexMap<PropertyType, usize>,
     pub source_priority: IndexMap<PropertyType, Vec<SourceKind>>,
+    pub numeric_tolerance: IndexMap<PropertyType, NumericTolerance>,
+}
+
+/// Absolute and relative compatibility thresholds for numeric scalar claims.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NumericTolerance {
+    pub relative_percent: Option<f64>,
+    pub absolute: Option<f64>,
 }
 
 impl Policy {
@@ -34,6 +43,11 @@ impl Policy {
     /// The source priority order for a property type, when one is configured.
     pub fn source_priority_for(&self, property_type: PropertyType) -> Option<&[SourceKind]> {
         self.source_priority.get(&property_type).map(Vec::as_slice)
+    }
+
+    /// Numeric tolerance for a property type, when one is configured.
+    pub fn numeric_tolerance_for(&self, property_type: PropertyType) -> Option<&NumericTolerance> {
+        self.numeric_tolerance.get(&property_type)
     }
 
     fn validate(self) -> Result<Self, PolicyRefusal> {
@@ -64,6 +78,7 @@ impl Policy {
                     | PropertyType::UsedBy
                     | PropertyType::Schedule
                     | PropertyType::ValidValues
+                    | PropertyType::NumericScalar
                     | PropertyType::SemanticLabel
                     | PropertyType::AuthoritativeFor
             ) {
@@ -74,7 +89,10 @@ impl Policy {
         }
 
         for (property_type, priorities) in &self.source_priority {
-            if *property_type != PropertyType::Liveness {
+            if !matches!(
+                property_type,
+                PropertyType::Liveness | PropertyType::NumericScalar
+            ) {
                 return Err(PolicyRefusal::new(format!(
                     "property `{property_type:?}` is not allowed in source_priority"
                 )));
@@ -87,7 +105,47 @@ impl Policy {
             }
         }
 
+        for (property_type, tolerance) in &self.numeric_tolerance {
+            if *property_type != PropertyType::NumericScalar {
+                return Err(PolicyRefusal::new(format!(
+                    "property `{property_type:?}` is not allowed in numeric_tolerance"
+                )));
+            }
+
+            validate_numeric_tolerance(tolerance)?;
+        }
+
         Ok(self)
+    }
+}
+
+fn validate_numeric_tolerance(tolerance: &NumericTolerance) -> Result<(), PolicyRefusal> {
+    if tolerance.relative_percent.is_none() && tolerance.absolute.is_none() {
+        return Err(PolicyRefusal::new(
+            "numeric_tolerance entries must provide relative_percent or absolute",
+        ));
+    }
+
+    validate_optional_non_negative_finite("relative_percent", tolerance.relative_percent)?;
+    validate_optional_non_negative_finite("absolute", tolerance.absolute)?;
+
+    Ok(())
+}
+
+fn validate_optional_non_negative_finite(
+    name: &str,
+    value: Option<f64>,
+) -> Result<(), PolicyRefusal> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+
+    if value.is_finite() && value >= 0.0 {
+        Ok(())
+    } else {
+        Err(PolicyRefusal::new(format!(
+            "numeric_tolerance {name} must be a non-negative finite number"
+        )))
     }
 }
 
@@ -138,7 +196,7 @@ mod tests {
 
     use tempfile::NamedTempFile;
 
-    use super::{PHASE_ONE_POLICY_ID, Policy, load_policy};
+    use super::{NumericTolerance, PHASE_ONE_POLICY_ID, Policy, load_policy};
     use crate::contracts::vocabulary::{PropertyType, SourceKind};
 
     #[test]
@@ -149,10 +207,18 @@ mod tests {
                 "auto_resolve": ["exists", "schema", "constraint"],
                 "min_corroboration": {
                     "reads": 2,
-                    "valid_values": 3
+                    "valid_values": 3,
+                    "numeric_scalar": 2
                 },
                 "source_priority": {
-                    "liveness": ["db_scan", "file_scan", "repo_scan"]
+                    "liveness": ["db_scan", "file_scan", "repo_scan"],
+                    "numeric_scalar": ["sec_xbrl", "dera", "balance_sheet", "parser_extraction"]
+                },
+                "numeric_tolerance": {
+                    "numeric_scalar": {
+                        "relative_percent": 0.01,
+                        "absolute": 1000000
+                    }
                 }
             }"#,
         );
@@ -171,6 +237,24 @@ mod tests {
                 ][..]
             )
         );
+        assert_eq!(
+            policy.source_priority_for(PropertyType::NumericScalar),
+            Some(
+                &[
+                    SourceKind::SecXbrl,
+                    SourceKind::Dera,
+                    SourceKind::BalanceSheet,
+                    SourceKind::ParserExtraction,
+                ][..]
+            )
+        );
+        assert_eq!(
+            policy.numeric_tolerance_for(PropertyType::NumericScalar),
+            Some(&NumericTolerance {
+                relative_percent: Some(0.01),
+                absolute: Some(1_000_000.0),
+            })
+        );
     }
 
     #[test]
@@ -181,6 +265,7 @@ mod tests {
                 "auto_resolve": ["exists"],
                 "min_corroboration": {},
                 "source_priority": {},
+                "numeric_tolerance": {},
                 "surprise": true
             }"#,
         );
@@ -195,7 +280,8 @@ mod tests {
                 "policy_id": "legacy.decode.v1",
                 "auto_resolve": ["exists"],
                 "min_corroboration": {},
-                "source_priority": {}
+                "source_priority": {},
+                "numeric_tolerance": {}
             }"#,
         );
 
@@ -209,7 +295,8 @@ mod tests {
                 "policy_id": "legacy.decode.v0",
                 "auto_resolve": ["liveness"],
                 "min_corroboration": {},
-                "source_priority": {}
+                "source_priority": {},
+                "numeric_tolerance": {}
             }"#,
         );
 
@@ -225,7 +312,8 @@ mod tests {
                 "min_corroboration": {
                     "schema": 2
                 },
-                "source_priority": {}
+                "source_priority": {},
+                "numeric_tolerance": {}
             }"#,
         );
 
@@ -242,7 +330,8 @@ mod tests {
                     "schema": 2,
                     "liveness": 3
                 },
-                "source_priority": {}
+                "source_priority": {},
+                "numeric_tolerance": {}
             }"#,
         );
 
@@ -258,7 +347,8 @@ mod tests {
                 "min_corroboration": {},
                 "source_priority": {
                     "depends_on": ["repo_scan"]
-                }
+                },
+                "numeric_tolerance": {}
             }"#,
         );
 
@@ -274,11 +364,67 @@ mod tests {
                 "min_corroboration": {},
                 "source_priority": {
                     "liveness": []
-                }
+                },
+                "numeric_tolerance": {}
             }"#,
         );
 
         assert!(error.reason.contains("at least one source kind"));
+    }
+
+    #[test]
+    fn rejects_unsupported_numeric_tolerance_property() {
+        let error = load_inline_policy_error(
+            r#"{
+                "policy_id": "legacy.decode.v0",
+                "auto_resolve": ["exists"],
+                "min_corroboration": {},
+                "source_priority": {},
+                "numeric_tolerance": {
+                    "valid_values": {
+                        "absolute": 1
+                    }
+                }
+            }"#,
+        );
+
+        assert!(error.reason.contains("numeric_tolerance"));
+    }
+
+    #[test]
+    fn rejects_empty_numeric_tolerance() {
+        let error = load_inline_policy_error(
+            r#"{
+                "policy_id": "legacy.decode.v0",
+                "auto_resolve": ["exists"],
+                "min_corroboration": {},
+                "source_priority": {},
+                "numeric_tolerance": {
+                    "numeric_scalar": {}
+                }
+            }"#,
+        );
+
+        assert!(error.reason.contains("relative_percent or absolute"));
+    }
+
+    #[test]
+    fn rejects_negative_numeric_tolerance() {
+        let error = load_inline_policy_error(
+            r#"{
+                "policy_id": "legacy.decode.v0",
+                "auto_resolve": ["exists"],
+                "min_corroboration": {},
+                "source_priority": {},
+                "numeric_tolerance": {
+                    "numeric_scalar": {
+                        "relative_percent": -0.1
+                    }
+                }
+            }"#,
+        );
+
+        assert!(error.reason.contains("non-negative finite"));
     }
 
     fn load_inline_policy(json: &str) -> Policy {
