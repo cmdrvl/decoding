@@ -19,6 +19,7 @@ pub struct Policy {
     pub min_corroboration: IndexMap<PropertyType, usize>,
     pub source_priority: IndexMap<PropertyType, Vec<SourceKind>>,
     pub numeric_tolerance: IndexMap<PropertyType, NumericTolerance>,
+    pub numeric_scale_inference: Option<NumericScaleInference>,
 }
 
 /// Absolute and relative compatibility thresholds for numeric scalar claims.
@@ -27,6 +28,14 @@ pub struct Policy {
 pub struct NumericTolerance {
     pub relative_percent: Option<f64>,
     pub absolute: Option<f64>,
+}
+
+/// Policy-gated inference for unknown numeric scalar units.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NumericScaleInference {
+    pub factors: Vec<f64>,
+    pub max_relative_after: f64,
 }
 
 impl Policy {
@@ -48,6 +57,11 @@ impl Policy {
     /// Numeric tolerance for a property type, when one is configured.
     pub fn numeric_tolerance_for(&self, property_type: PropertyType) -> Option<&NumericTolerance> {
         self.numeric_tolerance.get(&property_type)
+    }
+
+    /// Numeric scale inference policy, when enabled.
+    pub fn numeric_scale_inference(&self) -> Option<&NumericScaleInference> {
+        self.numeric_scale_inference.as_ref()
     }
 
     fn validate(self) -> Result<Self, PolicyRefusal> {
@@ -115,6 +129,10 @@ impl Policy {
             validate_numeric_tolerance(tolerance)?;
         }
 
+        if let Some(inference) = &self.numeric_scale_inference {
+            validate_numeric_scale_inference(inference)?;
+        }
+
         Ok(self)
     }
 }
@@ -132,6 +150,29 @@ fn validate_numeric_tolerance(tolerance: &NumericTolerance) -> Result<(), Policy
     Ok(())
 }
 
+fn validate_numeric_scale_inference(
+    inference: &NumericScaleInference,
+) -> Result<(), PolicyRefusal> {
+    if inference.factors.is_empty() {
+        return Err(PolicyRefusal::new(
+            "numeric_scale_inference factors must not be empty",
+        ));
+    }
+
+    for factor in &inference.factors {
+        if !is_clean_power_of_1000(*factor) {
+            return Err(PolicyRefusal::new(
+                "numeric_scale_inference factors must be clean powers of 1000 greater than 1",
+            ));
+        }
+    }
+
+    validate_optional_non_negative_finite(
+        "numeric_scale_inference max_relative_after",
+        Some(inference.max_relative_after),
+    )
+}
+
 fn validate_optional_non_negative_finite(
     name: &str,
     value: Option<f64>,
@@ -147,6 +188,20 @@ fn validate_optional_non_negative_finite(
             "numeric_tolerance {name} must be a non-negative finite number"
         )))
     }
+}
+
+fn is_clean_power_of_1000(factor: f64) -> bool {
+    if !factor.is_finite() || factor <= 1.0 {
+        return false;
+    }
+
+    let mut candidate = 1_000.0;
+    while candidate < factor {
+        candidate *= 1_000.0;
+    }
+
+    let scale = candidate.abs().max(factor.abs()).max(1.0);
+    (candidate - factor).abs() <= f64::EPSILON * scale * 16.0
 }
 
 /// Load and validate a policy file. Refuses on unknown keys.
@@ -196,7 +251,9 @@ mod tests {
 
     use tempfile::NamedTempFile;
 
-    use super::{NumericTolerance, PHASE_ONE_POLICY_ID, Policy, load_policy};
+    use super::{
+        NumericScaleInference, NumericTolerance, PHASE_ONE_POLICY_ID, Policy, load_policy,
+    };
     use crate::contracts::vocabulary::{PropertyType, SourceKind};
 
     #[test]
@@ -219,6 +276,10 @@ mod tests {
                         "relative_percent": 0.01,
                         "absolute": 1000000
                     }
+                },
+                "numeric_scale_inference": {
+                    "factors": [1000, 1000000, 1000000000],
+                    "max_relative_after": 0.01
                 }
             }"#,
         );
@@ -253,6 +314,13 @@ mod tests {
             Some(&NumericTolerance {
                 relative_percent: Some(0.01),
                 absolute: Some(1_000_000.0),
+            })
+        );
+        assert_eq!(
+            policy.numeric_scale_inference(),
+            Some(&NumericScaleInference {
+                factors: vec![1_000.0, 1_000_000.0, 1_000_000_000.0],
+                max_relative_after: 0.01,
             })
         );
     }
@@ -420,6 +488,63 @@ mod tests {
                     "numeric_scalar": {
                         "relative_percent": -0.1
                     }
+                }
+            }"#,
+        );
+
+        assert!(error.reason.contains("non-negative finite"));
+    }
+
+    #[test]
+    fn rejects_empty_numeric_scale_inference_factors() {
+        let error = load_inline_policy_error(
+            r#"{
+                "policy_id": "legacy.decode.v0",
+                "auto_resolve": ["exists"],
+                "min_corroboration": {},
+                "source_priority": {},
+                "numeric_tolerance": {},
+                "numeric_scale_inference": {
+                    "factors": [],
+                    "max_relative_after": 0.01
+                }
+            }"#,
+        );
+
+        assert!(error.reason.contains("factors"));
+    }
+
+    #[test]
+    fn rejects_unclean_numeric_scale_inference_factors() {
+        let error = load_inline_policy_error(
+            r#"{
+                "policy_id": "legacy.decode.v0",
+                "auto_resolve": ["exists"],
+                "min_corroboration": {},
+                "source_priority": {},
+                "numeric_tolerance": {},
+                "numeric_scale_inference": {
+                    "factors": [1000, 2000],
+                    "max_relative_after": 0.01
+                }
+            }"#,
+        );
+
+        assert!(error.reason.contains("powers of 1000"));
+    }
+
+    #[test]
+    fn rejects_invalid_numeric_scale_inference_relative_limit() {
+        let error = load_inline_policy_error(
+            r#"{
+                "policy_id": "legacy.decode.v0",
+                "auto_resolve": ["exists"],
+                "min_corroboration": {},
+                "source_priority": {},
+                "numeric_tolerance": {},
+                "numeric_scale_inference": {
+                    "factors": [1000],
+                    "max_relative_after": -0.01
                 }
             }"#,
         );

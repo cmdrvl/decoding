@@ -84,13 +84,13 @@ pub struct ValueRef {
     pub id: String,
 }
 
-/// A numeric scalar value with explicit financial scale.
+/// A numeric scalar value with optional financial scale.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NumericScalarValue {
     pub kind: String,
     pub value: f64,
-    pub scale: NumericScale,
+    pub scale: Option<NumericScale>,
 }
 
 impl NumericScalarValue {
@@ -98,12 +98,21 @@ impl NumericScalarValue {
         self.kind == "numeric_scalar"
     }
 
-    pub fn normalized_amount(&self) -> f64 {
-        self.value * self.scale.factor()
+    pub fn scale_factor(&self) -> Option<f64> {
+        self.scale.and_then(NumericScale::factor)
+    }
+
+    pub fn normalized_amount(&self) -> Option<f64> {
+        Some(self.value * self.scale_factor()?)
+    }
+
+    pub fn amount_with_factor(&self, factor: f64) -> f64 {
+        self.value * factor
     }
 }
 
-/// Explicit scale for numeric scalar values.
+/// Scale for numeric scalar values. `unknown` is accepted but cannot resolve
+/// without policy-gated scale inference against explicitly scaled evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NumericScale {
@@ -111,15 +120,17 @@ pub enum NumericScale {
     Thousands,
     Millions,
     Billions,
+    Unknown,
 }
 
 impl NumericScale {
-    fn factor(self) -> f64 {
+    pub fn factor(self) -> Option<f64> {
         match self {
-            Self::Dollars => 1.0,
-            Self::Thousands => 1_000.0,
-            Self::Millions => 1_000_000.0,
-            Self::Billions => 1_000_000_000.0,
+            Self::Dollars => Some(1.0),
+            Self::Thousands => Some(1_000.0),
+            Self::Millions => Some(1_000_000.0),
+            Self::Billions => Some(1_000_000_000.0),
+            Self::Unknown => None,
         }
     }
 }
@@ -245,7 +256,21 @@ mod tests {
                 .unwrap();
 
         assert!(parsed.is_valid_kind());
-        assert_eq!(parsed.scale, NumericScale::Millions);
-        assert_eq!(parsed.normalized_amount(), 29_499_300_000.0);
+        assert_eq!(parsed.scale, Some(NumericScale::Millions));
+        assert_eq!(parsed.normalized_amount(), Some(29_499_300_000.0));
+    }
+
+    #[test]
+    fn numeric_scalar_value_accepts_unknown_or_omitted_scale() {
+        let unknown: NumericScalarValue =
+            serde_json::from_str(r#"{"kind":"numeric_scalar","value":29499.3,"scale":"unknown"}"#)
+                .unwrap();
+        assert_eq!(unknown.scale, Some(NumericScale::Unknown));
+        assert_eq!(unknown.normalized_amount(), None);
+
+        let omitted: NumericScalarValue =
+            serde_json::from_str(r#"{"kind":"numeric_scalar","value":29499.3}"#).unwrap();
+        assert_eq!(omitted.scale, None);
+        assert_eq!(omitted.normalized_amount(), None);
     }
 }

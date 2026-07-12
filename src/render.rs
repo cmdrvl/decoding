@@ -89,6 +89,7 @@ mod tests {
                         .to_string(),
                 ],
                 resolution_kind: ResolutionKind::Corroborated,
+                scale_inference: None,
             },
         };
 
@@ -112,6 +113,7 @@ mod tests {
                     "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
                         .to_string(),
                 ],
+                scale_inference: None,
                 ..entry.explain.clone()
             },
             ..entry.clone()

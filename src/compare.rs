@@ -1,6 +1,6 @@
 //! Property-aware comparator registry and liveness fold logic.
 
-use crate::contracts::policy::NumericTolerance;
+use crate::contracts::policy::{NumericScaleInference, NumericTolerance};
 use crate::contracts::vocabulary::{NumericScalarValue, PropertyType, ValueRef};
 use crate::normalize::{canonical_json, normalize_string, sorted_set};
 use serde::Deserialize;
@@ -28,6 +28,17 @@ pub fn compare_with_numeric_tolerance(
     b: &serde_json::Value,
     numeric_tolerance: Option<&NumericTolerance>,
 ) -> Compatibility {
+    compare_with_numeric_policy(property_type, a, b, numeric_tolerance, None)
+}
+
+/// Compare two claim values, using numeric tolerance and optional scale inference.
+pub fn compare_with_numeric_policy(
+    property_type: PropertyType,
+    a: &serde_json::Value,
+    b: &serde_json::Value,
+    numeric_tolerance: Option<&NumericTolerance>,
+    numeric_scale_inference: Option<&NumericScaleInference>,
+) -> Compatibility {
     match property_type {
         PropertyType::Exists => compare_exists(a, b),
         PropertyType::Schema | PropertyType::Constraint | PropertyType::Schedule => {
@@ -39,7 +50,9 @@ pub fn compare_with_numeric_tolerance(
         | PropertyType::UsedBy
         | PropertyType::AuthoritativeFor => compare_value_refs(a, b),
         PropertyType::ValidValues => compare_valid_values(a, b),
-        PropertyType::NumericScalar => compare_numeric_scalars(a, b, numeric_tolerance),
+        PropertyType::NumericScalar => {
+            compare_numeric_scalars(a, b, numeric_tolerance, numeric_scale_inference)
+        }
         PropertyType::SemanticLabel => compare_semantic_labels(a, b),
         PropertyType::Liveness => liveness_fold(a, b),
     }
@@ -102,17 +115,16 @@ fn compare_numeric_scalars(
     a: &serde_json::Value,
     b: &serde_json::Value,
     tolerance: Option<&NumericTolerance>,
+    scale_inference: Option<&NumericScaleInference>,
 ) -> Compatibility {
-    let Some(left) = parse_numeric_amount(a) else {
+    let Some(left) = parse_numeric_value(a) else {
         return Compatibility::Incompatible;
     };
-    let Some(right) = parse_numeric_amount(b) else {
+    let Some(right) = parse_numeric_value(b) else {
         return Compatibility::Incompatible;
     };
 
-    if amounts_equal(left, right)
-        || tolerance.is_some_and(|tolerance| within_tolerance(left, right, tolerance))
-    {
+    if numeric_values_compatible(left, right, tolerance, scale_inference) {
         Compatibility::Compatible
     } else {
         Compatibility::Incompatible
@@ -141,13 +153,75 @@ fn parse_string_set(value: &serde_json::Value) -> Option<Vec<String>> {
     Some(sorted_set(&string_set.values))
 }
 
-fn parse_numeric_amount(value: &serde_json::Value) -> Option<f64> {
+fn parse_numeric_value(value: &serde_json::Value) -> Option<ParsedNumericValue> {
     let numeric: NumericScalarValue = serde_json::from_value(value.clone()).ok()?;
     if !numeric.is_valid_kind() || !numeric.value.is_finite() {
         return None;
     }
 
-    Some(numeric.normalized_amount())
+    Some(ParsedNumericValue {
+        raw_value: numeric.value,
+        normalized_amount: numeric.normalized_amount(),
+    })
+}
+
+fn numeric_values_compatible(
+    left: ParsedNumericValue,
+    right: ParsedNumericValue,
+    tolerance: Option<&NumericTolerance>,
+    scale_inference: Option<&NumericScaleInference>,
+) -> bool {
+    match (left.normalized_amount, right.normalized_amount) {
+        (Some(left), Some(right)) => numeric_amounts_compatible(left, right, tolerance),
+        (Some(left), None) => {
+            numeric_amounts_compatible(left, right.raw_value, tolerance)
+                || infer_unknown_scale_factor(right.raw_value, left, tolerance, scale_inference)
+                    .is_some()
+        }
+        (None, Some(right)) => {
+            numeric_amounts_compatible(left.raw_value, right, tolerance)
+                || infer_unknown_scale_factor(left.raw_value, right, tolerance, scale_inference)
+                    .is_some()
+        }
+        (None, None) => numeric_amounts_compatible(left.raw_value, right.raw_value, tolerance),
+    }
+}
+
+/// Infer the unique configured factor that makes an unknown-scale value match
+/// an explicitly normalized target amount.
+pub fn infer_unknown_scale_factor(
+    unknown_value: f64,
+    target_amount: f64,
+    tolerance: Option<&NumericTolerance>,
+    scale_inference: Option<&NumericScaleInference>,
+) -> Option<f64> {
+    if !unknown_value.is_finite() || !target_amount.is_finite() {
+        return None;
+    }
+
+    let scale_inference = scale_inference?;
+    let mut matches = scale_inference
+        .factors
+        .iter()
+        .copied()
+        .filter(|factor| {
+            let scaled = unknown_value * factor;
+            numeric_amounts_compatible(scaled, target_amount, tolerance)
+                || within_relative_after(scaled, target_amount, scale_inference.max_relative_after)
+        })
+        .collect::<Vec<_>>();
+    matches.sort_by(f64::total_cmp);
+    matches.dedup_by(|left, right| amounts_equal(*left, *right));
+
+    match matches.as_slice() {
+        [factor] => Some(*factor),
+        _ => None,
+    }
+}
+
+fn numeric_amounts_compatible(left: f64, right: f64, tolerance: Option<&NumericTolerance>) -> bool {
+    amounts_equal(left, right)
+        || tolerance.is_some_and(|tolerance| within_tolerance(left, right, tolerance))
 }
 
 fn amounts_equal(left: f64, right: f64) -> bool {
@@ -171,6 +245,16 @@ fn within_tolerance(left: f64, right: f64, tolerance: &NumericTolerance) -> bool
         amounts_equal(left, right)
     } else {
         diff / denominator <= relative_percent / 100.0
+    }
+}
+
+fn within_relative_after(left: f64, right: f64, max_relative_after: f64) -> bool {
+    let diff = (left - right).abs();
+    let denominator = left.abs().max(right.abs());
+    if denominator == 0.0 {
+        amounts_equal(left, right)
+    } else {
+        diff / denominator <= max_relative_after
     }
 }
 
@@ -215,12 +299,21 @@ enum LivenessState {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ParsedNumericValue {
+    raw_value: f64,
+    normalized_amount: Option<f64>,
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{Compatibility, compare, compare_with_numeric_tolerance, liveness_fold};
-    use crate::contracts::policy::NumericTolerance;
+    use super::{
+        Compatibility, compare, compare_with_numeric_policy, compare_with_numeric_tolerance,
+        liveness_fold,
+    };
+    use crate::contracts::policy::{NumericScaleInference, NumericTolerance};
     use crate::contracts::vocabulary::PropertyType;
 
     #[test]
@@ -346,6 +439,49 @@ mod tests {
                 &json!({"kind":"numeric_scalar","value":2280.0,"scale":"millions"}),
                 &json!({"kind":"numeric_scalar","value":4190.0,"scale":"millions"}),
                 Some(&tolerance),
+            ),
+            Compatibility::Incompatible
+        );
+    }
+
+    #[test]
+    fn numeric_scalars_infer_unknown_power_of_1000_scale_when_enabled() {
+        let tolerance = NumericTolerance {
+            relative_percent: Some(0.01),
+            absolute: Some(1_000_000.0),
+        };
+        let scale_inference = NumericScaleInference {
+            factors: vec![1_000.0, 1_000_000.0, 1_000_000_000.0],
+            max_relative_after: 0.01,
+        };
+
+        assert_eq!(
+            compare_with_numeric_policy(
+                PropertyType::NumericScalar,
+                &json!({"kind":"numeric_scalar","value":29499.0,"scale":"unknown"}),
+                &json!({"kind":"numeric_scalar","value":29499300000.0,"scale":"dollars"}),
+                Some(&tolerance),
+                Some(&scale_inference),
+            ),
+            Compatibility::Compatible
+        );
+        assert_eq!(
+            compare_with_numeric_policy(
+                PropertyType::NumericScalar,
+                &json!({"kind":"numeric_scalar","value":29499.0}),
+                &json!({"kind":"numeric_scalar","value":29499300000.0,"scale":"dollars"}),
+                Some(&tolerance),
+                None,
+            ),
+            Compatibility::Incompatible
+        );
+        assert_eq!(
+            compare_with_numeric_policy(
+                PropertyType::NumericScalar,
+                &json!({"kind":"numeric_scalar","value":4190.0}),
+                &json!({"kind":"numeric_scalar","value":2280000000.0,"scale":"dollars"}),
+                Some(&tolerance),
+                Some(&scale_inference),
             ),
             Compatibility::Incompatible
         );

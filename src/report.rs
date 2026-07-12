@@ -310,6 +310,7 @@ mod tests {
                         .to_string(),
                 ],
                 resolution_kind: ResolutionKind::SingleSource,
+                scale_inference: None,
             },
         }
     }

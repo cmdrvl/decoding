@@ -4,9 +4,12 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::bucket::Bucket;
-use crate::compare::{Compatibility, compare, compare_with_numeric_tolerance};
+use crate::compare::{
+    Compatibility, compare, compare_with_numeric_policy, infer_unknown_scale_factor,
+};
 use crate::contracts::canon_entry::{
-    CanonEntry, ConvergenceState, ConvergenceStateKind, Explanation, ResolutionKind,
+    CanonEntry, ConvergenceState, ConvergenceStateKind, Explanation, InferredScaleFactor,
+    ResolutionKind, ScaleInferenceExplanation,
 };
 use crate::contracts::escalation::{
     CandidateValue, Escalation, EscalationReason, RecommendedAction, ScalarCandidateKind,
@@ -89,14 +92,23 @@ struct CandidateGroup {
     source_artifact_ids: BTreeSet<String>,
     source_kinds: Vec<SourceKind>,
     raw_values: Vec<serde_json::Value>,
+    raw_claim_values: Vec<RawClaimValue>,
     selection_rank: usize,
     selection_claim_id: String,
+    resolvable: bool,
+    scale_inference: Option<ScaleInferenceExplanation>,
 }
 
 impl CandidateGroup {
     fn source_count(&self) -> usize {
         self.source_artifact_ids.len()
     }
+}
+
+#[derive(Debug, Clone)]
+struct RawClaimValue {
+    claim_id: String,
+    value: serde_json::Value,
 }
 
 fn resolve_liveness(bucket: &Bucket, policy: &Policy, groups: &[CandidateGroup]) -> Decision {
@@ -148,10 +160,13 @@ fn resolve_liveness(bucket: &Bucket, policy: &Policy, groups: &[CandidateGroup])
                 bucket,
                 policy,
                 chosen.canonical_value.clone(),
-                state,
-                chosen.claim_ids.clone(),
-                claim_ids(bucket),
-                resolution_kind,
+                CanonEntryResolution {
+                    state,
+                    winner_claim_ids: chosen.claim_ids.clone(),
+                    compatible_claim_ids: claim_ids(bucket),
+                    resolution_kind,
+                    scale_inference: None,
+                },
             ),
             source_kinds: source_kinds(bucket),
         });
@@ -182,10 +197,13 @@ fn resolve_liveness(bucket: &Bucket, policy: &Policy, groups: &[CandidateGroup])
             bucket,
             policy,
             chosen.canonical_value.clone(),
-            ConvergenceStateKind::Converging,
-            chosen.claim_ids.clone(),
-            claim_ids(bucket),
-            resolution_kind,
+            CanonEntryResolution {
+                state: ConvergenceStateKind::Converging,
+                winner_claim_ids: chosen.claim_ids.clone(),
+                compatible_claim_ids: claim_ids(bucket),
+                resolution_kind,
+                scale_inference: None,
+            },
         ),
         source_kinds: source_kinds(bucket),
     })
@@ -215,6 +233,20 @@ fn resolve_non_liveness(
 
     let chosen = &groups[0];
 
+    if property_type == PropertyType::NumericScalar && !chosen.resolvable {
+        return Decision::Escalated(EscalatedDecision {
+            escalation: build_escalation(
+                bucket,
+                EscalationReason::NoResolutionPath,
+                build_candidate_values(property_type, groups),
+                RecommendedAction::ScanMore,
+                "numeric_scalar scale is unknown and no explicit scale anchor was available"
+                    .to_string(),
+            ),
+            source_kinds: source_kinds(bucket),
+        });
+    }
+
     if policy.auto_resolves(property_type) {
         let (state, resolution_kind) = if bucket.claim_count() == 1 {
             (
@@ -233,10 +265,13 @@ fn resolve_non_liveness(
                 bucket,
                 policy,
                 chosen.canonical_value.clone(),
-                state,
-                chosen.claim_ids.clone(),
-                claim_ids(bucket),
-                resolution_kind,
+                CanonEntryResolution {
+                    state,
+                    winner_claim_ids: chosen.claim_ids.clone(),
+                    compatible_claim_ids: claim_ids(bucket),
+                    resolution_kind,
+                    scale_inference: None,
+                },
             ),
             source_kinds: source_kinds(bucket),
         });
@@ -274,7 +309,12 @@ fn resolve_non_liveness(
         });
     }
 
-    let (state, resolution_kind) = if bucket.claim_count() == 1 {
+    let (state, resolution_kind) = if chosen.scale_inference.is_some() {
+        (
+            ConvergenceStateKind::Converged,
+            ResolutionKind::ScaleInferred,
+        )
+    } else if bucket.claim_count() == 1 {
         (
             ConvergenceStateKind::SingleSource,
             ResolutionKind::SingleSource,
@@ -291,23 +331,31 @@ fn resolve_non_liveness(
             bucket,
             policy,
             chosen.canonical_value.clone(),
-            state,
-            chosen.claim_ids.clone(),
-            claim_ids(bucket),
-            resolution_kind,
+            CanonEntryResolution {
+                state,
+                winner_claim_ids: chosen.claim_ids.clone(),
+                compatible_claim_ids: claim_ids(bucket),
+                resolution_kind,
+                scale_inference: chosen.scale_inference.clone(),
+            },
         ),
         source_kinds: source_kinds(bucket),
     })
+}
+
+struct CanonEntryResolution {
+    state: ConvergenceStateKind,
+    winner_claim_ids: Vec<String>,
+    compatible_claim_ids: Vec<String>,
+    resolution_kind: ResolutionKind,
+    scale_inference: Option<ScaleInferenceExplanation>,
 }
 
 fn build_canon_entry(
     bucket: &Bucket,
     policy: &Policy,
     canonical_value: serde_json::Value,
-    state: ConvergenceStateKind,
-    winner_claim_ids: Vec<String>,
-    compatible_claim_ids: Vec<String>,
-    resolution_kind: ResolutionKind,
+    resolution: CanonEntryResolution,
 ) -> CanonEntry {
     CanonEntry {
         event: "canon_entry.v0".to_string(),
@@ -317,14 +365,15 @@ fn build_canon_entry(
         canonical_value,
         policy_id: policy.policy_id.clone(),
         convergence: ConvergenceState {
-            state,
+            state: resolution.state,
             source_count: bucket.source_artifact_count(),
             claim_count: bucket.claim_count(),
         },
         explain: Explanation {
-            winner_claim_ids,
-            compatible_claim_ids,
-            resolution_kind,
+            winner_claim_ids: resolution.winner_claim_ids,
+            compatible_claim_ids: resolution.compatible_claim_ids,
+            resolution_kind: resolution.resolution_kind,
+            scale_inference: resolution.scale_inference,
         },
     }
 }
@@ -399,6 +448,10 @@ fn candidate_groups(
                     group.display_value = display_value;
                 }
                 group.raw_values.push(claim.value.clone());
+                group.raw_claim_values.push(RawClaimValue {
+                    claim_id: claim.claim_id.clone(),
+                    value: claim.value.clone(),
+                });
             }
             None => {
                 let mut source_artifact_ids = BTreeSet::new();
@@ -414,8 +467,14 @@ fn candidate_groups(
                         source_artifact_ids,
                         source_kinds: vec![claim.source.kind],
                         raw_values: vec![claim.value.clone()],
+                        raw_claim_values: vec![RawClaimValue {
+                            claim_id: claim.claim_id.clone(),
+                            value: claim.value.clone(),
+                        }],
                         selection_rank: usize::MAX,
                         selection_claim_id: claim.claim_id.clone(),
+                        resolvable: true,
+                        scale_inference: None,
                     },
                 );
             }
@@ -432,26 +491,27 @@ fn candidate_groups(
 fn numeric_candidate_groups(bucket: &Bucket, policy: &Policy) -> Vec<CandidateGroup> {
     let mut groups = Vec::<CandidateGroup>::new();
     let tolerance = policy.numeric_tolerance_for(PropertyType::NumericScalar);
+    let scale_inference_policy = policy.numeric_scale_inference();
     let source_priority = policy.source_priority_for(PropertyType::NumericScalar);
 
     for claim in &bucket.claims {
-        let Some(canonical_value) =
-            canonical_output_value(PropertyType::NumericScalar, &claim.value)
-        else {
-            continue;
-        };
-        let display_value = canonical_value.clone();
+        let canonical_value = numeric_scalar_output_value(&claim.value);
+        let display_value = numeric_scalar_display_output_value(&claim.value)
+            .unwrap_or_else(|| canonicalize_json_value(&claim.value));
+        let can_resolve_claim = canonical_value.is_some();
+        let canonical_value = canonical_value.unwrap_or_else(|| display_value.clone());
         let canonical_key = canonical_json(&canonical_value);
         let display_key = canonical_json(&display_value);
         let selection_rank = numeric_selection_rank(claim.source.kind, source_priority);
 
         if let Some(group) = groups.iter_mut().find(|group| {
             group.raw_values.iter().all(|group_value| {
-                compare_with_numeric_tolerance(
+                compare_with_numeric_policy(
                     PropertyType::NumericScalar,
                     &claim.value,
                     group_value,
                     tolerance,
+                    scale_inference_policy,
                 ) == Compatibility::Compatible
             })
         }) {
@@ -461,16 +521,30 @@ fn numeric_candidate_groups(bucket: &Bucket, policy: &Policy) -> Vec<CandidateGr
                 .insert(claim.source.artifact_id.clone());
             group.source_kinds.push(claim.source.kind);
             group.raw_values.push(claim.value.clone());
+            group.raw_claim_values.push(RawClaimValue {
+                claim_id: claim.claim_id.clone(),
+                value: claim.value.clone(),
+            });
 
-            if numeric_claim_selection_key(selection_rank, &claim.claim_id)
-                < numeric_claim_selection_key(group.selection_rank, &group.selection_claim_id)
+            if display_key < group.display_key {
+                group.display_key = display_key.clone();
+                group.display_value = display_value.clone();
+            }
+
+            let claim_selection_key = numeric_claim_selection_key(selection_rank, &claim.claim_id);
+            let group_selection_key =
+                numeric_claim_selection_key(group.selection_rank, &group.selection_claim_id);
+
+            if can_resolve_claim && (!group.resolvable || claim_selection_key < group_selection_key)
             {
                 group.canonical_key = canonical_key;
                 group.canonical_value = canonical_value;
-                group.display_key = display_key;
-                group.display_value = display_value;
                 group.selection_rank = selection_rank;
                 group.selection_claim_id = claim.claim_id.clone();
+                group.resolvable = true;
+            } else if !group.resolvable && canonical_key < group.canonical_key {
+                group.canonical_key = canonical_key;
+                group.canonical_value = canonical_value;
             }
         } else {
             let mut source_artifact_ids = BTreeSet::new();
@@ -484,17 +558,64 @@ fn numeric_candidate_groups(bucket: &Bucket, policy: &Policy) -> Vec<CandidateGr
                 source_artifact_ids,
                 source_kinds: vec![claim.source.kind],
                 raw_values: vec![claim.value.clone()],
+                raw_claim_values: vec![RawClaimValue {
+                    claim_id: claim.claim_id.clone(),
+                    value: claim.value.clone(),
+                }],
                 selection_rank,
                 selection_claim_id: claim.claim_id.clone(),
+                resolvable: can_resolve_claim,
+                scale_inference: None,
             });
         }
     }
 
     for group in &mut groups {
         group.claim_ids.sort_unstable();
+        if group.resolvable {
+            group.scale_inference = numeric_scale_inference_explanation(group, policy);
+        }
     }
     groups.sort_by(|left, right| left.canonical_key.cmp(&right.canonical_key));
     groups
+}
+
+fn numeric_scale_inference_explanation(
+    group: &CandidateGroup,
+    policy: &Policy,
+) -> Option<ScaleInferenceExplanation> {
+    let target_amount = numeric_output_amount(&group.canonical_value)?;
+    let tolerance = policy.numeric_tolerance_for(PropertyType::NumericScalar);
+    let scale_inference = policy.numeric_scale_inference();
+
+    let mut inferred_factors = group
+        .raw_claim_values
+        .iter()
+        .filter_map(|raw_claim| {
+            let numeric: NumericScalarValue =
+                serde_json::from_value(raw_claim.value.clone()).ok()?;
+            if numeric.scale_factor().is_some() {
+                return None;
+            }
+
+            infer_unknown_scale_factor(numeric.value, target_amount, tolerance, scale_inference)
+                .map(|factor| InferredScaleFactor {
+                    claim_id: raw_claim.claim_id.clone(),
+                    factor,
+                })
+        })
+        .collect::<Vec<_>>();
+
+    if inferred_factors.is_empty() {
+        return None;
+    }
+
+    inferred_factors.sort_by(|left, right| left.claim_id.cmp(&right.claim_id));
+
+    Some(ScaleInferenceExplanation {
+        canonical_scale: "dollars".to_string(),
+        inferred_factors,
+    })
 }
 
 fn numeric_selection_rank(
@@ -545,11 +666,12 @@ fn has_incompatible_claims(bucket: &Bucket, property_type: PropertyType, policy:
     for (index, left) in bucket.claims.iter().enumerate() {
         for right in bucket.claims.iter().skip(index + 1) {
             let compatibility = if property_type == PropertyType::NumericScalar {
-                compare_with_numeric_tolerance(
+                compare_with_numeric_policy(
                     property_type,
                     &left.value,
                     &right.value,
                     policy.numeric_tolerance_for(property_type),
+                    policy.numeric_scale_inference(),
                 )
             } else {
                 compare(property_type, &left.value, &right.value)
@@ -733,7 +855,34 @@ fn numeric_scalar_output_value(value: &serde_json::Value) -> Option<serde_json::
         return None;
     }
 
-    let amount = Number::from_f64(numeric.normalized_amount())?;
+    numeric_output_value_from_amount(numeric.normalized_amount()?)
+}
+
+fn numeric_scalar_display_output_value(value: &serde_json::Value) -> Option<serde_json::Value> {
+    let numeric: NumericScalarValue = serde_json::from_value(value.clone()).ok()?;
+    if !numeric.is_valid_kind() || !numeric.value.is_finite() {
+        return None;
+    }
+
+    match numeric.normalized_amount() {
+        Some(amount) => numeric_output_value_from_amount(amount),
+        None => {
+            let amount = Number::from_f64(numeric.value)?;
+            let mut output = serde_json::Map::new();
+            output.insert(
+                "kind".to_string(),
+                Value::String("numeric_scalar".to_string()),
+            );
+            output.insert("scale".to_string(), Value::String("unknown".to_string()));
+            output.insert("value".to_string(), Value::Number(amount));
+
+            Some(Value::Object(output))
+        }
+    }
+}
+
+fn numeric_output_value_from_amount(amount: f64) -> Option<serde_json::Value> {
+    let amount = Number::from_f64(amount)?;
     let mut output = serde_json::Map::new();
     output.insert(
         "kind".to_string(),
@@ -743,6 +892,15 @@ fn numeric_scalar_output_value(value: &serde_json::Value) -> Option<serde_json::
     output.insert("value".to_string(), Value::Number(amount));
 
     Some(Value::Object(output))
+}
+
+fn numeric_output_amount(value: &serde_json::Value) -> Option<f64> {
+    let numeric: NumericScalarValue = serde_json::from_value(value.clone()).ok()?;
+    if !numeric.is_valid_kind() || !numeric.value.is_finite() {
+        return None;
+    }
+
+    numeric.normalized_amount()
 }
 
 fn is_dead_value(value: &serde_json::Value) -> bool {
@@ -1022,6 +1180,71 @@ mod tests {
     }
 
     #[test]
+    fn resolves_unknown_numeric_scalar_scale_by_inference() {
+        let mut store = BucketStore::default();
+        store.insert(
+            parse_claim(r#"{"event":"claim.v0","claim_id":"sha256:1111111111111111111111111111111111111111111111111111111111111111","source":{"kind":"sec_xbrl","scanner":"crucible.scan.sec_xbrl@0.1.0","artifact_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","locator":{"kind":"fact","value":"ares.2026_q1#investments_at_fair_value"}},"subject":{"kind":"fund","id":"ares.2026_q1"},"property_type":"numeric_scalar","value":{"kind":"numeric_scalar","value":29499300000.0,"scale":"dollars"},"confidence":0.99}"#).unwrap(),
+        );
+        store.insert(
+            parse_claim(r#"{"event":"claim.v0","claim_id":"sha256:2222222222222222222222222222222222222222222222222222222222222222","source":{"kind":"parser_extraction","scanner":"cmdrvl.soi.parser@0.1.0","artifact_id":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","locator":{"kind":"table_cell","value":"ares.2026_q1#total_investments_fair_value"}},"subject":{"kind":"fund","id":"ares.2026_q1"},"property_type":"numeric_scalar","value":{"kind":"numeric_scalar","value":29499.0},"confidence":0.82}"#).unwrap(),
+        );
+
+        let policy = load_policy_fixture("legacy.decode.v0.json").unwrap();
+        let bucket = store.buckets.values().next().unwrap();
+
+        let decision = resolve_bucket(bucket, &policy);
+        assert!(matches!(&decision, Decision::Resolved(_)));
+
+        if let Decision::Resolved(decision) = decision {
+            let entry = decision.entry;
+            assert_eq!(
+                entry.canonical_value,
+                json!({
+                    "kind": "numeric_scalar",
+                    "scale": "dollars",
+                    "value": 29499300000.0
+                })
+            );
+            assert_eq!(entry.explain.resolution_kind, ResolutionKind::ScaleInferred);
+            let scale_inference = entry.explain.scale_inference.unwrap();
+            assert_eq!(scale_inference.canonical_scale, "dollars");
+            assert_eq!(scale_inference.inferred_factors.len(), 1);
+            assert_eq!(
+                scale_inference.inferred_factors[0].claim_id,
+                "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+            );
+            assert_eq!(scale_inference.inferred_factors[0].factor, 1_000_000.0);
+        }
+    }
+
+    #[test]
+    fn escalates_unknown_numeric_scalar_without_explicit_anchor() {
+        let mut store = BucketStore::default();
+        store.insert(
+            parse_claim(r#"{"event":"claim.v0","claim_id":"sha256:1111111111111111111111111111111111111111111111111111111111111111","source":{"kind":"parser_extraction","scanner":"cmdrvl.soi.parser@0.1.0","artifact_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","locator":{"kind":"table_cell","value":"ares.2026_q1#total_investments_fair_value"}},"subject":{"kind":"fund","id":"ares.2026_q1"},"property_type":"numeric_scalar","value":{"kind":"numeric_scalar","value":29499.0,"scale":"unknown"},"confidence":0.82}"#).unwrap(),
+        );
+        store.insert(
+            parse_claim(r#"{"event":"claim.v0","claim_id":"sha256:2222222222222222222222222222222222222222222222222222222222222222","source":{"kind":"balance_sheet","scanner":"cmdrvl.soi.balance_sheet@0.1.0","artifact_id":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","locator":{"kind":"line_item","value":"ares.2026_q1#investments_at_fair_value"}},"subject":{"kind":"fund","id":"ares.2026_q1"},"property_type":"numeric_scalar","value":{"kind":"numeric_scalar","value":29499.0},"confidence":0.76}"#).unwrap(),
+        );
+
+        let policy = load_policy_fixture("legacy.decode.v0.json").unwrap();
+        let bucket = store.buckets.values().next().unwrap();
+
+        let decision = resolve_bucket(bucket, &policy);
+        assert!(matches!(&decision, Decision::Escalated(_)));
+
+        if let Decision::Escalated(decision) = decision {
+            let escalation = decision.escalation;
+            assert_eq!(escalation.reason, EscalationReason::NoResolutionPath);
+            assert_eq!(escalation.recommended_action, RecommendedAction::ScanMore);
+            assert_eq!(
+                escalation.summary,
+                "numeric_scalar scale is unknown and no explicit scale anchor was available"
+            );
+        }
+    }
+
+    #[test]
     fn escalates_conflicted_numeric_scalar_outside_tolerance() {
         let mut store = BucketStore::default();
         store.insert(
@@ -1146,6 +1369,7 @@ mod tests {
             min_corroboration: IndexMap::new(),
             source_priority: IndexMap::new(),
             numeric_tolerance: IndexMap::new(),
+            numeric_scale_inference: None,
         };
 
         let decision = resolve_bucket(bucket, &policy);

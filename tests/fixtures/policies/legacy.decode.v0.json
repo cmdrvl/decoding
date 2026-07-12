@@ -21,5 +21,9 @@
       "relative_percent": 0.01,
       "absolute": 1000000
     }
+  },
+  "numeric_scale_inference": {
+    "factors": [1000, 1000000, 1000000000],
+    "max_relative_after": 0.01
   }
 }

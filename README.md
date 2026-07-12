@@ -153,6 +153,10 @@ A declarative policy file controls resolution behavior:
   "numeric_tolerance": {
     "numeric_scalar": { "relative_percent": 0.01, "absolute": 1000000 }
   },
+  "numeric_scale_inference": {
+    "factors": [1000, 1000000, 1000000000],
+    "max_relative_after": 0.01
+  },
   "source_priority": {
     "liveness": ["db_scan", "file_scan", "repo_scan"],
     "numeric_scalar": ["sec_xbrl", "dera", "balance_sheet", "parser_extraction"]
@@ -163,6 +167,7 @@ A declarative policy file controls resolution behavior:
 - **Auto-resolve** — structural properties (`exists`, `schema`, `constraint`) resolve with a single high-confidence claim
 - **Min corroboration** — behavioral and semantic properties need multiple compatible claims
 - **Numeric tolerance** — financial scalar claims compare after scale normalization, using configured absolute or relative tolerance
+- **Scale inference** — optional policy-gated reconciliation for unknown-unit numeric claims when one clean power-of-1000 factor ties them to explicitly scaled evidence
 - **Source priority** — liveness uses source-type ranking when claims are compatible but varied
 
 ### Comparators
@@ -175,7 +180,7 @@ Each property type has a frozen compatibility rule:
 | `schema` | Normalized JSON deep-equal |
 | `reads`, `writes`, `depends_on`, `used_by`, `authoritative_for` | Same subject ref |
 | `valid_values` | Same sorted set of strings |
-| `numeric_scalar` | Same normalized amount within configured absolute or relative tolerance |
+| `numeric_scalar` | Same normalized amount within configured absolute or relative tolerance, or unknown scale reconciles through a unique configured power-of-1000 factor |
 | `semantic_label` | Same normalized string |
 | `liveness` | Same state, or `alive` + `stale`, or `stale` + `unknown` |
 
@@ -204,7 +209,11 @@ Each property type has a frozen compatibility rule:
 }
 ```
 
-Resolution kinds: `single_source`, `corroborated`, `priority_break`, `liveness_fold`.
+Resolution kinds: `single_source`, `corroborated`, `priority_break`, `liveness_fold`, `scale_inferred`.
+
+When numeric scale inference is used, `explain.scale_inference` records
+`canonical_scale:"dollars"` and sorted `{claim_id, factor}` entries for the
+unknown-scale claims that were reconciled.
 
 ### Escalation (`escalation.v0`)
 

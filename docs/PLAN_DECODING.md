@@ -313,9 +313,12 @@ Frozen financial claim additions:
 - `subject.kind`: `fund` and `holding_line` are accepted for financial-value
   adjudication.
 - `numeric_scalar` values use
-  `{"kind":"numeric_scalar","value":<number>,"scale":"dollars|thousands|millions|billions"}`.
+  `{"kind":"numeric_scalar","value":<number>,"scale":"dollars|thousands|millions|billions|unknown"}`.
+  `scale` may be omitted when the claimant does not know the document unit.
   Compatibility and canonical output compare the value after scale
-  normalization to dollars. Scale is explicit; claims that omit it are refused.
+  normalization to dollars when scale is explicit. Unknown-scale claims do not
+  resolve by assumption; they only converge when policy-gated scale inference
+  finds a unique clean power-of-1000 factor against explicitly scaled evidence.
 
 ### Value compatibility rules
 
@@ -432,9 +435,13 @@ Frozen field contract:
 | `convergence.claim_count` | integer | total contributing claims |
 | `explain.winner_claim_ids` | array | sorted winning claim IDs |
 | `explain.compatible_claim_ids` | array | sorted compatible claim IDs included in support |
-| `explain.resolution_kind` | enum | `single_source`, `corroborated`, `priority_break`, `liveness_fold` |
+| `explain.resolution_kind` | enum | `single_source`, `corroborated`, `priority_break`, `liveness_fold`, `scale_inferred` |
 
 The explanation payload should stay structured. Free-text commentary can wait.
+When `resolution_kind` is `scale_inferred`, `explain` also carries
+`scale_inference` with `canonical_scale:"dollars"` and sorted
+`inferred_factors` entries of `{claim_id, factor}` for each unknown-scale claim
+that required inference. Other resolution kinds omit this field.
 
 ### `escalation.v0`
 
@@ -537,6 +544,10 @@ Phase 1 also needs a frozen minimal policy contract:
       "relative_percent": 0.01,
       "absolute": 1000000
     }
+  },
+  "numeric_scale_inference": {
+    "factors": [1000, 1000000, 1000000000],
+    "max_relative_after": 0.01
   }
 }
 ```
@@ -546,6 +557,11 @@ property-specific code beyond the comparator registry, numeric tolerance, and
 liveness fold, the policy surface is too ambitious. Numeric `absolute`
 tolerance is measured after scale normalization to dollars. Numeric
 `relative_percent` is a percent value, so `0.01` means one basis point.
+`numeric_scale_inference` is optional and disabled when omitted. When enabled,
+factors must be clean powers of 1000 greater than 1. `max_relative_after` is a
+unitless relative error threshold after applying the candidate factor. If more
+than one configured factor matches, or no explicitly scaled claim anchors the
+bucket, the bucket remains unresolved instead of assuming dollars.
 
 ---
 

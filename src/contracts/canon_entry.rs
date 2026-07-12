@@ -32,6 +32,23 @@ pub struct Explanation {
     pub winner_claim_ids: Vec<String>,
     pub compatible_claim_ids: Vec<String>,
     pub resolution_kind: ResolutionKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scale_inference: Option<ScaleInferenceExplanation>,
+}
+
+/// Structured provenance for numeric scale inference.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScaleInferenceExplanation {
+    pub canonical_scale: String,
+    pub inferred_factors: Vec<InferredScaleFactor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InferredScaleFactor {
+    pub claim_id: String,
+    pub factor: f64,
 }
 
 /// Convergence state for a canonical entry.
@@ -51,13 +68,17 @@ pub enum ResolutionKind {
     Corroborated,
     PriorityBreak,
     LivenessFold,
+    ScaleInferred,
 }
 
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{CanonEntry, ConvergenceState, ConvergenceStateKind, Explanation, ResolutionKind};
+    use super::{
+        CanonEntry, ConvergenceState, ConvergenceStateKind, Explanation, InferredScaleFactor,
+        ResolutionKind, ScaleInferenceExplanation,
+    };
     use crate::contracts::vocabulary::{PropertyType, SubjectKind, SubjectRef};
 
     #[test]
@@ -94,6 +115,7 @@ mod tests {
                         .to_string(),
                 ],
                 resolution_kind: ResolutionKind::Corroborated,
+                scale_inference: None,
             },
         };
 
@@ -135,6 +157,71 @@ mod tests {
 
         let reparsed: CanonEntry = serde_json::from_value(rendered).unwrap();
         assert_eq!(reparsed, entry);
+    }
+
+    #[test]
+    fn canon_entry_serializes_scale_inference_explanation() {
+        let entry = CanonEntry {
+            event: "canon_entry.v0".to_string(),
+            bucket_id: "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                .to_string(),
+            subject: SubjectRef {
+                kind: SubjectKind::Fund,
+                id: "ares.2026_q1".to_string(),
+            },
+            property_type: PropertyType::NumericScalar,
+            canonical_value: json!({
+                "kind": "numeric_scalar",
+                "scale": "dollars",
+                "value": 29499300000.0
+            }),
+            policy_id: "legacy.decode.v0".to_string(),
+            convergence: ConvergenceState {
+                state: ConvergenceStateKind::Converged,
+                source_count: 2,
+                claim_count: 2,
+            },
+            explain: Explanation {
+                winner_claim_ids: vec![
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        .to_string(),
+                    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                        .to_string(),
+                ],
+                compatible_claim_ids: vec![
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        .to_string(),
+                    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                        .to_string(),
+                ],
+                resolution_kind: ResolutionKind::ScaleInferred,
+                scale_inference: Some(ScaleInferenceExplanation {
+                    canonical_scale: "dollars".to_string(),
+                    inferred_factors: vec![InferredScaleFactor {
+                        claim_id:
+                            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                                .to_string(),
+                        factor: 1_000_000.0,
+                    }],
+                }),
+            },
+        };
+
+        let rendered = serde_json::to_value(&entry).unwrap();
+        assert_eq!(
+            rendered["explain"]["resolution_kind"],
+            json!("scale_inferred")
+        );
+        assert_eq!(
+            rendered["explain"]["scale_inference"],
+            json!({
+                "canonical_scale": "dollars",
+                "inferred_factors": [{
+                    "claim_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "factor": 1000000.0
+                }]
+            })
+        );
     }
 
     #[test]

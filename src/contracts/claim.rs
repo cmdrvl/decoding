@@ -356,6 +356,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_claim_accepts_unknown_or_omitted_numeric_scale() {
+        for value in [
+            r#"{"kind":"numeric_scalar","value":29499.3,"scale":"unknown"}"#,
+            r#"{"kind":"numeric_scalar","value":29499.3}"#,
+        ] {
+            let line = format!(
+                r#"{{"event":"claim.v0","claim_id":"sha256:dcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdc","source":{{"kind":"parser_extraction","scanner":"cmdrvl.soi.parser@0.1.0","artifact_id":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","locator":{{"kind":"table_cell","value":"ares.2026_q1#total_investments_fair_value"}}}},"subject":{{"kind":"fund","id":"ares.2026_q1"}},"property_type":"numeric_scalar","value":{value},"confidence":0.82}}"#
+            );
+
+            let claim = parse_claim(&line).unwrap();
+            assert_eq!(claim.property_type, PropertyType::NumericScalar);
+        }
+    }
+
+    #[test]
     fn parse_claim_rejects_unexpected_event_names() {
         let line = r#"{"event":"canon_entry.v0","claim_id":"sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd","source":{"kind":"repo_scan","scanner":"crucible.scan.repo@0.1.0","artifact_id":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","locator":{"kind":"file_range","value":"deps.sql#L1-L4"}},"subject":{"kind":"report","id":"hyperion.close_pack_ebitda"},"property_type":"depends_on","value":{"kind":"feed","id":"fdmee.actuals_load"},"confidence":0.7}"#;
 
