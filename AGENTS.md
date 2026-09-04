@@ -351,7 +351,8 @@ Agent Mail is the coordination layer for multi-agent sessions in this repo: iden
 ### Session Baseline
 
 1. If direct MCP Agent Mail tools are available, ensure project and reuse your identity:
-   - `ensure_project(project_key="/Users/zac/Source/cmdrvl/decoding")`
+   - `ensure_project(project_key=...)` with the absolute path of this repo's working directory (`git rev-parse --show-toplevel`) — a real absolute
+     path, not a shell expression or slug (Agent Mail validates it).
    - `whois(project_key, agent_name)` or `register_agent(...)` only if identity does not exist
 2. Reserve only exact files you will edit:
    - Allowed: `src/bucket.rs`, `src/compare.rs`
