@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.workflow }}-${{ github.ref }}
+  group: release-${{ github.repository }}
   cancel-in-progress: false
 
 env:
@@ -172,6 +172,20 @@ jobs:
           PY
           )
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse to replace an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          status=$(curl --silent --show-error --output "$RUNNER_TEMP/release-check.json" --write-out '%{http_code}' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")
+          if [[ "$status" != 404 ]]; then
+            echo "Release check returned HTTP $status; refusing to publish $RELEASE_TAG. Bump the version for a new release."
+            exit 1
+          fi
 
       - name: Create tag if missing
         run: |
