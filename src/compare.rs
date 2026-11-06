@@ -3,6 +3,8 @@
 use crate::contracts::policy::{NumericScaleInference, NumericTolerance};
 use crate::contracts::vocabulary::{NumericScalarValue, PropertyType, ValueRef};
 use crate::normalize::{canonical_json, normalize_string, sorted_set};
+use crate::numeric::ExactDecimal;
+use bigdecimal::BigDecimal;
 use serde::Deserialize;
 
 /// Result of comparing two claim values for compatibility.
@@ -155,13 +157,13 @@ fn parse_string_set(value: &serde_json::Value) -> Option<Vec<String>> {
 
 fn parse_numeric_value(value: &serde_json::Value) -> Option<ParsedNumericValue> {
     let numeric: NumericScalarValue = serde_json::from_value(value.clone()).ok()?;
-    if !numeric.is_valid_kind() || !numeric.value.is_finite() {
+    if !numeric.is_valid_kind() {
         return None;
     }
 
     Some(ParsedNumericValue {
-        raw_value: numeric.value,
         normalized_amount: numeric.normalized_amount(),
+        raw_value: numeric.value.0,
     })
 }
 
@@ -172,89 +174,100 @@ fn numeric_values_compatible(
     scale_inference: Option<&NumericScaleInference>,
 ) -> bool {
     match (left.normalized_amount, right.normalized_amount) {
-        (Some(left), Some(right)) => numeric_amounts_compatible(left, right, tolerance),
+        (Some(left), Some(right)) => numeric_amounts_compatible(&left, &right, tolerance),
         (Some(left), None) => {
-            numeric_amounts_compatible(left, right.raw_value, tolerance)
-                || infer_unknown_scale_factor(right.raw_value, left, tolerance, scale_inference)
+            numeric_amounts_compatible(&left, &right.raw_value, tolerance)
+                || infer_unknown_scale_factor(&right.raw_value, &left, tolerance, scale_inference)
                     .is_some()
         }
         (None, Some(right)) => {
-            numeric_amounts_compatible(left.raw_value, right, tolerance)
-                || infer_unknown_scale_factor(left.raw_value, right, tolerance, scale_inference)
+            numeric_amounts_compatible(&left.raw_value, &right, tolerance)
+                || infer_unknown_scale_factor(&left.raw_value, &right, tolerance, scale_inference)
                     .is_some()
         }
-        (None, None) => numeric_amounts_compatible(left.raw_value, right.raw_value, tolerance),
+        (None, None) => numeric_amounts_compatible(&left.raw_value, &right.raw_value, tolerance),
     }
 }
 
 /// Infer the unique configured factor that makes an unknown-scale value match
 /// an explicitly normalized target amount.
 pub fn infer_unknown_scale_factor(
-    unknown_value: f64,
-    target_amount: f64,
+    unknown_value: &BigDecimal,
+    target_amount: &BigDecimal,
     tolerance: Option<&NumericTolerance>,
     scale_inference: Option<&NumericScaleInference>,
-) -> Option<f64> {
-    if !unknown_value.is_finite() || !target_amount.is_finite() {
-        return None;
-    }
-
+) -> Option<ExactDecimal> {
     let scale_inference = scale_inference?;
     let mut matches = scale_inference
         .factors
         .iter()
-        .copied()
         .filter(|factor| {
-            let scaled = unknown_value * factor;
-            numeric_amounts_compatible(scaled, target_amount, tolerance)
-                || within_relative_after(scaled, target_amount, scale_inference.max_relative_after)
+            let scaled = unknown_value * &factor.0;
+            numeric_amounts_compatible(&scaled, target_amount, tolerance)
+                || within_relative_after(
+                    &scaled,
+                    target_amount,
+                    &scale_inference.max_relative_after.0,
+                )
         })
+        .cloned()
         .collect::<Vec<_>>();
-    matches.sort_by(f64::total_cmp);
-    matches.dedup_by(|left, right| amounts_equal(*left, *right));
+    matches.sort();
+    matches.dedup();
 
     match matches.as_slice() {
-        [factor] => Some(*factor),
+        [factor] => Some(factor.clone()),
         _ => None,
     }
 }
 
-fn numeric_amounts_compatible(left: f64, right: f64, tolerance: Option<&NumericTolerance>) -> bool {
+fn numeric_amounts_compatible(
+    left: &BigDecimal,
+    right: &BigDecimal,
+    tolerance: Option<&NumericTolerance>,
+) -> bool {
     amounts_equal(left, right)
         || tolerance.is_some_and(|tolerance| within_tolerance(left, right, tolerance))
 }
 
-fn amounts_equal(left: f64, right: f64) -> bool {
-    let scale = left.abs().max(right.abs()).max(1.0);
-    (left - right).abs() <= f64::EPSILON * scale * 16.0
+fn amounts_equal(left: &BigDecimal, right: &BigDecimal) -> bool {
+    left == right
 }
 
-fn within_tolerance(left: f64, right: f64, tolerance: &NumericTolerance) -> bool {
+fn within_tolerance(left: &BigDecimal, right: &BigDecimal, tolerance: &NumericTolerance) -> bool {
     let diff = (left - right).abs();
 
-    if tolerance.absolute.is_some_and(|absolute| diff <= absolute) {
+    if tolerance
+        .absolute
+        .as_ref()
+        .is_some_and(|absolute| diff <= absolute.0)
+    {
         return true;
     }
 
-    let Some(relative_percent) = tolerance.relative_percent else {
+    let Some(relative_percent) = &tolerance.relative_percent else {
         return false;
     };
 
     let denominator = left.abs().max(right.abs());
-    if denominator == 0.0 {
+    if denominator == 0u32 {
         amounts_equal(left, right)
     } else {
-        diff / denominator <= relative_percent / 100.0
+        diff * 100u32 <= denominator * &relative_percent.0
     }
 }
 
-fn within_relative_after(left: f64, right: f64, max_relative_after: f64) -> bool {
+fn within_relative_after(
+    left: &BigDecimal,
+    right: &BigDecimal,
+    max_relative_after: &BigDecimal,
+) -> bool {
     let diff = (left - right).abs();
     let denominator = left.abs().max(right.abs());
-    if denominator == 0.0 {
+    if denominator == 0u32 {
         amounts_equal(left, right)
     } else {
-        diff / denominator <= max_relative_after
+        diff <= denominator * max_relative_after
     }
 }
 
@@ -299,10 +312,10 @@ enum LivenessState {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct ParsedNumericValue {
-    raw_value: f64,
-    normalized_amount: Option<f64>,
+    raw_value: BigDecimal,
+    normalized_amount: Option<BigDecimal>,
 }
 
 #[cfg(test)]
@@ -412,8 +425,8 @@ mod tests {
     #[test]
     fn numeric_scalars_normalize_scale_and_apply_tolerance() {
         let tolerance = NumericTolerance {
-            relative_percent: Some(0.01),
-            absolute: Some(1_000_000.0),
+            relative_percent: Some("0.01".parse().unwrap()),
+            absolute: Some(1_000_000u32.into()),
         };
 
         assert_eq!(
@@ -447,12 +460,16 @@ mod tests {
     #[test]
     fn numeric_scalars_infer_unknown_power_of_1000_scale_when_enabled() {
         let tolerance = NumericTolerance {
-            relative_percent: Some(0.01),
-            absolute: Some(1_000_000.0),
+            relative_percent: Some("0.01".parse().unwrap()),
+            absolute: Some(1_000_000u32.into()),
         };
         let scale_inference = NumericScaleInference {
-            factors: vec![1_000.0, 1_000_000.0, 1_000_000_000.0],
-            max_relative_after: 0.01,
+            factors: vec![
+                1_000u32.into(),
+                1_000_000u32.into(),
+                1_000_000_000u32.into(),
+            ],
+            max_relative_after: "0.01".parse().unwrap(),
         };
 
         assert_eq!(

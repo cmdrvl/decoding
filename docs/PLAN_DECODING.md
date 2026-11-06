@@ -26,9 +26,26 @@ These declarations are producer evidence, not decoder authentication of the sour
 
 Unscoped legacy claims retain artifact-ID counting. Scoped outputs use `source_count`
 for the number of known independent origin components. Duplicate IDs and reordered
-inputs retain the existing deterministic replay contract. Exact decimal arithmetic
-is a separate unfinished part of bd-ou1: current f64 comparison is not qualified for
-BDC financial acceptance, and adding context/ancestry does not grant that acceptance.
+inputs retain the existing deterministic replay contract. Context and ancestry
+declarations still require source-backed producer validation; arithmetic correctness
+does not grant BDC financial acceptance.
+
+### Exact numeric contract
+
+Numeric scalar amounts, absolute/relative tolerances, inference factors and inference
+thresholds are decoded from the original JSON number tokens using arbitrary-precision
+JSON and pinned `bigdecimal` 0.4.11. They never pass through f64. Equality is exact;
+there is no implicit epsilon. Absolute tolerance is inclusive. Relative percent uses
+`abs(a-b) * 100 <= max(abs(a),abs(b)) * percent`, without division or rounding.
+Scale normalization uses exact integer powers of 1000. Outputs remain JSON numbers
+and retain every significant digit; consumers must likewise avoid float decoding.
+
+Resource limits refuse (exit 2), never round or truncate: number tokens at most 4096
+bytes, at most 1024 significant digits, and normalized absolute scale at most 1024.
+Normalization to declared units must also fit these limits. JSON strings are not
+numeric scalar amounts or tolerance values. The legacy optional scale-inference
+policy remains explicit and auditable; BDC acceptance must disable inference based
+solely on matching a desired total and use source-supported units instead.
 
 ## One-line promise
 **Turn ambiguous archaeology propositions into a deterministic canonical map

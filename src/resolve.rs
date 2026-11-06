@@ -18,8 +18,10 @@ use crate::contracts::escalation::{
 use crate::contracts::policy::Policy;
 use crate::contracts::vocabulary::{NumericScalarValue, PropertyType, SourceKind, ValueRef};
 use crate::normalize::{canonical_json, normalize_string, sorted_set};
+use crate::numeric::ExactDecimal;
+use bigdecimal::BigDecimal;
 use serde::Deserialize;
-use serde_json::{Number, Value, json};
+use serde_json::{Value, json};
 
 /// The decision produced for a single bucket after resolution.
 #[derive(Debug)]
@@ -604,7 +606,7 @@ fn numeric_scale_inference_explanation(
                 return None;
             }
 
-            infer_unknown_scale_factor(numeric.value, target_amount, tolerance, scale_inference)
+            infer_unknown_scale_factor(&numeric.value.0, &target_amount, tolerance, scale_inference)
                 .map(|factor| InferredScaleFactor {
                     claim_id: raw_claim.claim_id.clone(),
                     factor,
@@ -857,7 +859,7 @@ fn parse_string_set(value: &serde_json::Value) -> Option<Vec<String>> {
 
 fn numeric_scalar_output_value(value: &serde_json::Value) -> Option<serde_json::Value> {
     let numeric: NumericScalarValue = serde_json::from_value(value.clone()).ok()?;
-    if !numeric.is_valid_kind() || !numeric.value.is_finite() {
+    if !numeric.is_valid_kind() {
         return None;
     }
 
@@ -866,43 +868,43 @@ fn numeric_scalar_output_value(value: &serde_json::Value) -> Option<serde_json::
 
 fn numeric_scalar_display_output_value(value: &serde_json::Value) -> Option<serde_json::Value> {
     let numeric: NumericScalarValue = serde_json::from_value(value.clone()).ok()?;
-    if !numeric.is_valid_kind() || !numeric.value.is_finite() {
+    if !numeric.is_valid_kind() {
         return None;
     }
 
     match numeric.normalized_amount() {
         Some(amount) => numeric_output_value_from_amount(amount),
         None => {
-            let amount = Number::from_f64(numeric.value)?;
+            let amount = serde_json::to_value(&numeric.value).ok()?;
             let mut output = serde_json::Map::new();
             output.insert(
                 "kind".to_string(),
                 Value::String("numeric_scalar".to_string()),
             );
             output.insert("scale".to_string(), Value::String("unknown".to_string()));
-            output.insert("value".to_string(), Value::Number(amount));
+            output.insert("value".to_string(), amount);
 
             Some(Value::Object(output))
         }
     }
 }
 
-fn numeric_output_value_from_amount(amount: f64) -> Option<serde_json::Value> {
-    let amount = Number::from_f64(amount)?;
+fn numeric_output_value_from_amount(amount: BigDecimal) -> Option<serde_json::Value> {
+    let amount = serde_json::to_value(ExactDecimal(amount)).ok()?;
     let mut output = serde_json::Map::new();
     output.insert(
         "kind".to_string(),
         Value::String("numeric_scalar".to_string()),
     );
     output.insert("scale".to_string(), Value::String("dollars".to_string()));
-    output.insert("value".to_string(), Value::Number(amount));
+    output.insert("value".to_string(), amount);
 
     Some(Value::Object(output))
 }
 
-fn numeric_output_amount(value: &serde_json::Value) -> Option<f64> {
+fn numeric_output_amount(value: &serde_json::Value) -> Option<BigDecimal> {
     let numeric: NumericScalarValue = serde_json::from_value(value.clone()).ok()?;
-    if !numeric.is_valid_kind() || !numeric.value.is_finite() {
+    if !numeric.is_valid_kind() {
         return None;
     }
 
@@ -1219,7 +1221,10 @@ mod tests {
                 scale_inference.inferred_factors[0].claim_id,
                 "sha256:2222222222222222222222222222222222222222222222222222222222222222"
             );
-            assert_eq!(scale_inference.inferred_factors[0].factor, 1_000_000.0);
+            assert_eq!(
+                scale_inference.inferred_factors[0].factor,
+                1_000_000u32.into()
+            );
         }
     }
 

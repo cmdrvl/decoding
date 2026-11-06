@@ -4,7 +4,7 @@ use decoding::bucket::BucketStore;
 use decoding::render::{write_canon_entry, write_escalation};
 use decoding::report::generate_report;
 use decoding::resolve::{Decision, resolve_bucket};
-use insta::{assert_json_snapshot, assert_snapshot};
+use insta::assert_snapshot;
 
 fn mixed_source_outputs() -> (String, String, serde_json::Value) {
     let _ = fixture_support::fixtures_root();
@@ -64,5 +64,8 @@ fn escalation_output_matches_snapshot() {
 #[test]
 fn convergence_output_matches_snapshot() {
     let (_, _, report) = mixed_source_outputs();
-    assert_json_snapshot!("convergence_v0_mixed_source", report);
+    // Use the actual JSON serializer: a generic serde serializer exposes
+    // arbitrary_precision's private Number marker instead of JSON numbers.
+    let report = serde_json::to_string_pretty(&report).unwrap();
+    assert_snapshot!("convergence_v0_mixed_source", report);
 }

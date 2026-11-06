@@ -191,7 +191,12 @@ fn capabilities_report() -> Value {
                 "exact_context_bucketing": true,
                 "source_ancestry_components": true,
                 "unknown_ancestry_independence_credit": false,
-                "exact_decimal_arithmetic": false
+                "exact_decimal_arithmetic": true,
+                "decimal_limits": {
+                    "significant_digits": crate::numeric::MAX_DECIMAL_DIGITS,
+                    "normalized_absolute_scale": crate::numeric::MAX_DECIMAL_SCALE,
+                    "json_token_bytes": 4096
+                }
             },
             "policy_contract": "legacy.decode.v0",
             "output_contracts": ["canon_entry.v0", "escalation.v0", "convergence.v0"],

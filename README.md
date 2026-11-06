@@ -129,7 +129,10 @@ origins. See the [scoped claim contract](docs/PLAN_DECODING.md#scoped-claims-and
 
 Check `doctor capabilities --json` → `core_command.claim_features` before submitting
 scoped claims: older binaries can silently ignore these fields. Exact decimal
-arithmetic remains unsupported; this capability is not financial acceptance.
+arithmetic preserves JSON number tokens through normalization and tolerance checks;
+it does not establish financial truth. Consumers must also decode numbers exactly.
+The reported limits are 1024 significant digits, normalized absolute scale 1024,
+and 4096-byte number tokens; exceeding them refuses instead of rounding.
 
 ### State Machine
 

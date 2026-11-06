@@ -59,7 +59,7 @@ fn loads_shared_policy_fixture() {
             .numeric_tolerance_for(PropertyType::NumericScalar)
             .unwrap()
             .relative_percent,
-        Some(0.01)
+        Some("0.01".parse().unwrap())
     );
     assert_eq!(
         policy

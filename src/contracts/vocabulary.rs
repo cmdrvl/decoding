@@ -89,7 +89,7 @@ pub struct ValueRef {
 #[serde(deny_unknown_fields)]
 pub struct NumericScalarValue {
     pub kind: String,
-    pub value: f64,
+    pub value: crate::numeric::ExactDecimal,
     pub scale: Option<NumericScale>,
 }
 
@@ -98,16 +98,16 @@ impl NumericScalarValue {
         self.kind == "numeric_scalar"
     }
 
-    pub fn scale_factor(&self) -> Option<f64> {
+    pub fn scale_factor(&self) -> Option<bigdecimal::BigDecimal> {
         self.scale.and_then(NumericScale::factor)
     }
 
-    pub fn normalized_amount(&self) -> Option<f64> {
-        Some(self.value * self.scale_factor()?)
+    pub fn normalized_amount(&self) -> Option<bigdecimal::BigDecimal> {
+        Some(&self.value.0 * self.scale_factor()?)
     }
 
-    pub fn amount_with_factor(&self, factor: f64) -> f64 {
-        self.value * factor
+    pub fn amount_with_factor(&self, factor: &bigdecimal::BigDecimal) -> bigdecimal::BigDecimal {
+        &self.value.0 * factor
     }
 }
 
@@ -124,12 +124,12 @@ pub enum NumericScale {
 }
 
 impl NumericScale {
-    pub fn factor(self) -> Option<f64> {
+    pub fn factor(self) -> Option<bigdecimal::BigDecimal> {
         match self {
-            Self::Dollars => Some(1.0),
-            Self::Thousands => Some(1_000.0),
-            Self::Millions => Some(1_000_000.0),
-            Self::Billions => Some(1_000_000_000.0),
+            Self::Dollars => Some(1u32.into()),
+            Self::Thousands => Some(1_000u32.into()),
+            Self::Millions => Some(1_000_000u32.into()),
+            Self::Billions => Some(1_000_000_000u32.into()),
             Self::Unknown => None,
         }
     }
@@ -257,7 +257,7 @@ mod tests {
 
         assert!(parsed.is_valid_kind());
         assert_eq!(parsed.scale, Some(NumericScale::Millions));
-        assert_eq!(parsed.normalized_amount(), Some(29_499_300_000.0));
+        assert_eq!(parsed.normalized_amount(), Some(29_499_300_000u64.into()));
     }
 
     #[test]

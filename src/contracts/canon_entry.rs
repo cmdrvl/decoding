@@ -50,7 +50,7 @@ pub struct ScaleInferenceExplanation {
 #[serde(deny_unknown_fields)]
 pub struct InferredScaleFactor {
     pub claim_id: String,
-    pub factor: f64,
+    pub factor: crate::numeric::ExactDecimal,
 }
 
 /// Convergence state for a canonical entry.
@@ -205,7 +205,7 @@ mod tests {
                         claim_id:
                             "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
                                 .to_string(),
-                        factor: 1_000_000.0,
+                        factor: 1_000_000u32.into(),
                     }],
                 }),
             },

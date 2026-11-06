@@ -80,7 +80,7 @@ fn doctor_capabilities_json_describes_contracts() -> Result<(), Box<dyn std::err
     );
     assert_eq!(
         report["core_command"]["claim_features"]["exact_decimal_arithmetic"],
-        false
+        true
     );
     assert_eq!(
         report["core_command"]["output_contracts"][2],

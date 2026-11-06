@@ -7,6 +7,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::vocabulary::{PropertyType, SourceKind};
+use crate::numeric::ExactDecimal;
 
 const PHASE_ONE_POLICY_ID: &str = "legacy.decode.v0";
 
@@ -26,16 +27,16 @@ pub struct Policy {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NumericTolerance {
-    pub relative_percent: Option<f64>,
-    pub absolute: Option<f64>,
+    pub relative_percent: Option<ExactDecimal>,
+    pub absolute: Option<ExactDecimal>,
 }
 
 /// Policy-gated inference for unknown numeric scalar units.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NumericScaleInference {
-    pub factors: Vec<f64>,
-    pub max_relative_after: f64,
+    pub factors: Vec<ExactDecimal>,
+    pub max_relative_after: ExactDecimal,
 }
 
 impl Policy {
@@ -144,8 +145,8 @@ fn validate_numeric_tolerance(tolerance: &NumericTolerance) -> Result<(), Policy
         ));
     }
 
-    validate_optional_non_negative_finite("relative_percent", tolerance.relative_percent)?;
-    validate_optional_non_negative_finite("absolute", tolerance.absolute)?;
+    validate_optional_non_negative_finite("relative_percent", tolerance.relative_percent.as_ref())?;
+    validate_optional_non_negative_finite("absolute", tolerance.absolute.as_ref())?;
 
     Ok(())
 }
@@ -160,7 +161,7 @@ fn validate_numeric_scale_inference(
     }
 
     for factor in &inference.factors {
-        if !is_clean_power_of_1000(*factor) {
+        if !is_clean_power_of_1000(factor) {
             return Err(PolicyRefusal::new(
                 "numeric_scale_inference factors must be clean powers of 1000 greater than 1",
             ));
@@ -169,19 +170,19 @@ fn validate_numeric_scale_inference(
 
     validate_optional_non_negative_finite(
         "numeric_scale_inference max_relative_after",
-        Some(inference.max_relative_after),
+        Some(&inference.max_relative_after),
     )
 }
 
 fn validate_optional_non_negative_finite(
     name: &str,
-    value: Option<f64>,
+    value: Option<&ExactDecimal>,
 ) -> Result<(), PolicyRefusal> {
     let Some(value) = value else {
         return Ok(());
     };
 
-    if value.is_finite() && value >= 0.0 {
+    if value.0 >= 0u32 {
         Ok(())
     } else {
         Err(PolicyRefusal::new(format!(
@@ -190,18 +191,17 @@ fn validate_optional_non_negative_finite(
     }
 }
 
-fn is_clean_power_of_1000(factor: f64) -> bool {
-    if !factor.is_finite() || factor <= 1.0 {
+fn is_clean_power_of_1000(factor: &ExactDecimal) -> bool {
+    if factor.0 <= 1u32 {
         return false;
     }
 
-    let mut candidate = 1_000.0;
-    while candidate < factor {
-        candidate *= 1_000.0;
+    let mut candidate = bigdecimal::BigDecimal::from(1_000u32);
+    while candidate < factor.0 {
+        candidate *= 1_000u32;
     }
 
-    let scale = candidate.abs().max(factor.abs()).max(1.0);
-    (candidate - factor).abs() <= f64::EPSILON * scale * 16.0
+    candidate == factor.0
 }
 
 /// Load and validate a policy file. Refuses on unknown keys.
@@ -312,15 +312,19 @@ mod tests {
         assert_eq!(
             policy.numeric_tolerance_for(PropertyType::NumericScalar),
             Some(&NumericTolerance {
-                relative_percent: Some(0.01),
-                absolute: Some(1_000_000.0),
+                relative_percent: Some("0.01".parse().unwrap()),
+                absolute: Some(1_000_000u32.into()),
             })
         );
         assert_eq!(
             policy.numeric_scale_inference(),
             Some(&NumericScaleInference {
-                factors: vec![1_000.0, 1_000_000.0, 1_000_000_000.0],
-                max_relative_after: 0.01,
+                factors: vec![
+                    1_000u32.into(),
+                    1_000_000u32.into(),
+                    1_000_000_000u32.into()
+                ],
+                max_relative_after: "0.01".parse().unwrap(),
             })
         );
     }

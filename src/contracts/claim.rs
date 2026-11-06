@@ -221,9 +221,12 @@ fn validate_value_shape(property_type: PropertyType, value: &Value) -> Result<()
                 ));
             }
 
-            if !numeric.value.is_finite() {
+            if numeric
+                .normalized_amount()
+                .is_some_and(|amount| !crate::numeric::within_bounds(&amount))
+            {
                 return Err(ClaimRefusal::new(
-                    "numeric_scalar value must be a finite number",
+                    "normalized numeric_scalar exceeds decimal resource limits",
                 ));
             }
 
