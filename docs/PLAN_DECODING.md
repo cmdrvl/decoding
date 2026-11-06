@@ -1,5 +1,35 @@
 # decoding — Phase 1
 
+## Scoped claims and source dependence (bd-ou1)
+
+Native probes reproduced two distinct problems: unrecognized context/ancestry
+fields were silently discarded, and different representations of one document
+earned independent corroboration through their artifact IDs. Scoped `claim.v0`
+records therefore carry both `context` and `ancestry`; neither may appear alone.
+Unknown claim/source/locator fields are refused rather than silently ignored.
+
+`context` is a nonempty string-to-string map. All keys and values must be nonblank.
+Its exact contents participate in bucket identity and appear unchanged in canonical
+entries and escalations. No normalization or inference equates different contexts.
+The producer owns the domain schema: BDC producers must bind accession, document,
+amendment, as-of date, currency, unit, consolidation scope and subject grain before
+submission. Different contexts and unscoped claims cannot corroborate one another.
+
+`ancestry` has `status` (`known` or `unknown`) and `origin_source_ids` (unique,
+nonblank strings). Known ancestry requires at least one origin. Unknown ancestry
+earns zero independent-source credit. Within one bucket, known claims whose origin
+sets overlap form a single dependence component, transitively. One derived claim
+with several origins is still one component, not several votes. The source artifact
+ID continues to identify the representation, not its independent origin. Conflicts
+remain conflicts regardless of dependence or repeated agreeing representations.
+These declarations are producer evidence, not decoder authentication of the source.
+
+Unscoped legacy claims retain artifact-ID counting. Scoped outputs use `source_count`
+for the number of known independent origin components. Duplicate IDs and reordered
+inputs retain the existing deterministic replay contract. Exact decimal arithmetic
+is a separate unfinished part of bd-ou1: current f64 comparison is not qualified for
+BDC financial acceptance, and adding context/ancestry does not grant that acceptance.
+
 ## One-line promise
 **Turn ambiguous archaeology propositions into a deterministic canonical map
 for one bounded legacy outcome slice.**

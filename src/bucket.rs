@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::contracts::claim::Claim;
+use crate::contracts::claim::{AncestryStatus, Claim, ClaimContext};
 use crate::contracts::vocabulary::{PropertyType, SubjectRef, ValueRef};
 use crate::normalize::{canonical_json, sha256_hex};
 use indexmap::map::Entry;
@@ -18,12 +18,14 @@ pub enum BucketKey {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BaseBucketKey {
+    pub context: Option<ClaimContext>,
     pub subject: SubjectRef,
     pub property_type: PropertyType,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EdgeBucketKey {
+    pub context: Option<ClaimContext>,
     pub subject: SubjectRef,
     pub property_type: PropertyType,
     pub value_ref: ValueRef,
@@ -55,6 +57,35 @@ impl Bucket {
     }
 
     pub fn source_artifact_count(&self) -> usize {
+        if self.key.context().is_some() {
+            let mut components: Vec<BTreeSet<&str>> = Vec::new();
+            for ancestry in self
+                .claims
+                .iter()
+                .filter_map(|claim| claim.ancestry.as_ref())
+            {
+                if ancestry.status == AncestryStatus::Unknown {
+                    continue;
+                }
+                let mut origins: BTreeSet<&str> = ancestry
+                    .origin_source_ids
+                    .iter()
+                    .map(String::as_str)
+                    .collect();
+                let mut index = 0;
+                while index < components.len() {
+                    if origins.is_disjoint(&components[index]) {
+                        index += 1;
+                    } else {
+                        origins.extend(components.remove(index));
+                        // A newly joined origin may connect an earlier component.
+                        index = 0;
+                    }
+                }
+                components.push(origins);
+            }
+            return components.len();
+        }
         self.claims
             .iter()
             .map(|claim| claim.source.artifact_id.as_str())
@@ -74,6 +105,13 @@ impl Bucket {
 }
 
 impl BucketKey {
+    pub fn context(&self) -> &Option<ClaimContext> {
+        match self {
+            BucketKey::Base(key) => &key.context,
+            BucketKey::Edge(key) => &key.context,
+        }
+    }
+
     pub fn subject(&self) -> &SubjectRef {
         match self {
             BucketKey::Base(key) => &key.subject,
@@ -96,7 +134,7 @@ impl BucketKey {
     }
 
     fn canonical_value(&self) -> serde_json::Value {
-        match self {
+        let mut value = match self {
             BucketKey::Base(key) => json!({
                 "subject": key.subject,
                 "property_type": key.property_type,
@@ -106,7 +144,11 @@ impl BucketKey {
                 "property_type": key.property_type,
                 "value": key.value_ref,
             }),
+        };
+        if let Some(context) = self.context() {
+            value["context"] = json!(context);
         }
+        value
     }
 }
 
@@ -119,12 +161,14 @@ pub fn bucket_key_for(claim: &Claim) -> BucketKey {
             .expect("edge property must contain a value ref");
 
         BucketKey::Edge(EdgeBucketKey {
+            context: claim.context.clone(),
             subject: claim.subject.clone(),
             property_type: claim.property_type,
             value_ref,
         })
     } else {
         BucketKey::Base(BaseBucketKey {
+            context: claim.context.clone(),
             subject: claim.subject.clone(),
             property_type: claim.property_type,
         })
@@ -202,6 +246,7 @@ mod tests {
         assert_eq!(
             key,
             BucketKey::Edge(EdgeBucketKey {
+                context: None,
                 subject: claim.subject.clone(),
                 property_type: PropertyType::DependsOn,
                 value_ref: claim.value_ref().unwrap().unwrap(),
@@ -217,6 +262,7 @@ mod tests {
         assert_eq!(
             key,
             BucketKey::Base(BaseBucketKey {
+                context: None,
                 subject: claim.subject.clone(),
                 property_type: PropertyType::Liveness,
             })
@@ -226,6 +272,7 @@ mod tests {
     #[test]
     fn bucket_id_matches_phase_one_base_object_shape() {
         let key = BucketKey::Base(BaseBucketKey {
+            context: None,
             subject: crate::contracts::vocabulary::SubjectRef {
                 kind: SubjectKind::Feed,
                 id: "fdmee.actuals_load".to_string(),

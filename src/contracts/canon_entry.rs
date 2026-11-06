@@ -8,6 +8,8 @@ use super::vocabulary::{PropertyType, SubjectRef};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CanonEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<super::claim::ClaimContext>,
     pub event: String,
     pub bucket_id: String,
     pub subject: SubjectRef,
@@ -84,6 +86,7 @@ mod tests {
     #[test]
     fn canon_entry_round_trips_with_frozen_wire_shape() {
         let entry = CanonEntry {
+            context: None,
             event: "canon_entry.v0".to_string(),
             bucket_id: "sha256:1111111111111111111111111111111111111111111111111111111111111111"
                 .to_string(),
@@ -162,6 +165,7 @@ mod tests {
     #[test]
     fn canon_entry_serializes_scale_inference_explanation() {
         let entry = CanonEntry {
+            context: None,
             event: "canon_entry.v0".to_string(),
             bucket_id: "sha256:1111111111111111111111111111111111111111111111111111111111111111"
                 .to_string(),

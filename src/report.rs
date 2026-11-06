@@ -286,6 +286,7 @@ mod tests {
         state: ConvergenceStateKind,
     ) -> CanonEntry {
         CanonEntry {
+            context: None,
             event: "canon_entry.v0".to_string(),
             bucket_id: bucket_id.to_string(),
             subject: SubjectRef {
@@ -328,6 +329,7 @@ mod tests {
         };
 
         Escalation {
+            context: None,
             event: "escalation.v0".to_string(),
             bucket_id: bucket_id.to_string(),
             subject: SubjectRef {

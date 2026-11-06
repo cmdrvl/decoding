@@ -8,6 +8,8 @@ use super::vocabulary::{PropertyType, SubjectRef, ValueRef};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Escalation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<super::claim::ClaimContext>,
     pub event: String,
     pub bucket_id: String,
     pub subject: SubjectRef,
@@ -74,6 +76,7 @@ mod tests {
     #[test]
     fn escalation_round_trips_with_scalar_and_ref_candidates() {
         let escalation = Escalation {
+            context: None,
             event: "escalation.v0".to_string(),
             bucket_id: "sha256:2222222222222222222222222222222222222222222222222222222222222222"
                 .to_string(),

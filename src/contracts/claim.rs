@@ -2,11 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::vocabulary::{NumericScalarValue, PropertyType, SourceKind, SubjectRef, ValueRef};
 
 /// A derived claim from a crucible scan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Claim {
     pub event: String,
     pub claim_id: String,
@@ -15,9 +17,31 @@ pub struct Claim {
     pub property_type: PropertyType,
     pub value: serde_json::Value,
     pub confidence: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ClaimContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ancestry: Option<ClaimAncestry>,
+}
+
+/// Exact producer-defined dimensions; domain-required keys belong to its schema.
+pub type ClaimContext = BTreeMap<String, String>;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimAncestry {
+    pub status: AncestryStatus,
+    pub origin_source_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AncestryStatus {
+    Known,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ClaimSource {
     pub kind: SourceKind,
     pub scanner: String,
@@ -26,6 +50,7 @@ pub struct ClaimSource {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SourceLocator {
     pub kind: String,
     pub value: String,
@@ -84,6 +109,32 @@ impl Claim {
         }
 
         validate_claim_id(&self.claim_id)?;
+        match (&self.context, &self.ancestry) {
+            (Some(context), Some(ancestry)) => {
+                if context.is_empty()
+                    || context
+                        .iter()
+                        .any(|(key, value)| key.trim().is_empty() || value.trim().is_empty())
+                {
+                    return Err(ClaimRefusal::new("context requires nonblank dimensions"));
+                }
+                let origins: BTreeSet<_> = ancestry.origin_source_ids.iter().collect();
+                if origins.len() != ancestry.origin_source_ids.len()
+                    || origins.iter().any(|origin| origin.trim().is_empty())
+                    || (ancestry.status == AncestryStatus::Known && origins.is_empty())
+                {
+                    return Err(ClaimRefusal::new(
+                        "known ancestry requires unique nonblank origins",
+                    ));
+                }
+            }
+            (None, None) => {}
+            _ => {
+                return Err(ClaimRefusal::new(
+                    "context and ancestry must be supplied together",
+                ));
+            }
+        }
         validate_value_shape(self.property_type, &self.value)
     }
 }

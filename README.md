@@ -118,6 +118,19 @@ Claims are grouped into buckets by a logical key:
 
 Edge properties get their own bucket per target so independent relationships don't collapse.
 
+Scoped claims additionally supply `context` (an exact, nonempty map of string
+dimensions) and `ancestry` together. For example, `"ancestry":{"status":"known",
+"origin_source_ids":["filing-sha256:..."]}` identifies the underlying source even
+when several parsers produce different artifact IDs. Overlapping origin sets count
+as one dependence group; unknown ancestry earns no independent corroboration.
+Different contexts never share a bucket, and outputs preserve their exact context.
+Producers must supply every domain-required dimension and evidence for the declared
+origins. See the [scoped claim contract](docs/PLAN_DECODING.md#scoped-claims-and-source-dependence-bd-ou1).
+
+Check `doctor capabilities --json` → `core_command.claim_features` before submitting
+scoped claims: older binaries can silently ignore these fields. Exact decimal
+arithmetic remains unsupported; this capability is not financial acceptance.
+
 ### State Machine
 
 Each bucket moves through a small state machine:

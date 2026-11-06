@@ -71,6 +71,18 @@ fn doctor_capabilities_json_describes_contracts() -> Result<(), Box<dyn std::err
     );
     assert_eq!(report["core_command"]["input_contract"], "claim.v0");
     assert_eq!(
+        report["core_command"]["claim_features"]["exact_context_bucketing"],
+        true
+    );
+    assert_eq!(
+        report["core_command"]["claim_features"]["source_ancestry_components"],
+        true
+    );
+    assert_eq!(
+        report["core_command"]["claim_features"]["exact_decimal_arithmetic"],
+        false
+    );
+    assert_eq!(
         report["core_command"]["output_contracts"][2],
         "convergence.v0"
     );

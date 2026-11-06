@@ -143,7 +143,9 @@ fn resolve_liveness(bucket: &Bucket, policy: &Policy, groups: &[CandidateGroup])
             });
         }
 
-        let (state, resolution_kind) = if bucket.claim_count() == 1 {
+        let (state, resolution_kind) = if bucket.claim_count() == 1
+            || (bucket.key.context().is_some() && bucket.source_artifact_count() < 2)
+        {
             (
                 ConvergenceStateKind::SingleSource,
                 ResolutionKind::SingleSource,
@@ -314,7 +316,9 @@ fn resolve_non_liveness(
             ConvergenceStateKind::Converged,
             ResolutionKind::ScaleInferred,
         )
-    } else if bucket.claim_count() == 1 {
+    } else if bucket.claim_count() == 1
+        || (bucket.key.context().is_some() && bucket.source_artifact_count() < 2)
+    {
         (
             ConvergenceStateKind::SingleSource,
             ResolutionKind::SingleSource,
@@ -358,6 +362,7 @@ fn build_canon_entry(
     resolution: CanonEntryResolution,
 ) -> CanonEntry {
     CanonEntry {
+        context: bucket.key.context().clone(),
         event: "canon_entry.v0".to_string(),
         bucket_id: bucket.bucket_id.clone(),
         subject: bucket.key.subject().clone(),
@@ -386,6 +391,7 @@ fn build_escalation(
     summary: String,
 ) -> Escalation {
     Escalation {
+        context: bucket.key.context().clone(),
         event: "escalation.v0".to_string(),
         bucket_id: bucket.bucket_id.clone(),
         subject: bucket.key.subject().clone(),

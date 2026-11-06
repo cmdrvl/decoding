@@ -187,6 +187,12 @@ fn capabilities_report() -> Value {
         "core_command": {
             "command": "decoding archaeology <CLAIMS>... --policy <FILE>",
             "input_contract": "claim.v0",
+            "claim_features": {
+                "exact_context_bucketing": true,
+                "source_ancestry_components": true,
+                "unknown_ancestry_independence_credit": false,
+                "exact_decimal_arithmetic": false
+            },
             "policy_contract": "legacy.decode.v0",
             "output_contracts": ["canon_entry.v0", "escalation.v0", "convergence.v0"],
             "exit_codes": {

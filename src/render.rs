@@ -58,6 +58,7 @@ mod tests {
     #[test]
     fn writes_canon_entry_jsonl_with_sorted_explain_ids() {
         let entry = CanonEntry {
+            context: None,
             event: "canon_entry.v0".to_string(),
             bucket_id: "sha256:1111111111111111111111111111111111111111111111111111111111111111"
                 .to_string(),
@@ -127,6 +128,7 @@ mod tests {
     #[test]
     fn writes_escalation_jsonl_with_sorted_claim_ids_and_candidate_values() {
         let escalation = Escalation {
+            context: None,
             event: "escalation.v0".to_string(),
             bucket_id: "sha256:2222222222222222222222222222222222222222222222222222222222222222"
                 .to_string(),
