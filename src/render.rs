@@ -1,11 +1,98 @@
 //! Render canon_entry.v0 and escalation.v0 records to JSONL output.
 
+use std::collections::BTreeMap;
 use std::io::Write;
 
 use crate::contracts::canon_entry::CanonEntry;
 use crate::contracts::escalation::{CandidateValue, Escalation};
 use crate::contracts::escalation::{ScalarCandidateKind, ScalarCandidateValue};
-use crate::normalize::{canonical_json, sha256_hex};
+use crate::normalize::canonical_json;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+
+type HmacSha256 = Hmac<Sha256>;
+
+/// The redaction mode for one emitted escalation output set.
+pub enum RedactionMode {
+    Explicit,
+    Ordinal,
+    Keyed(Vec<u8>),
+}
+
+impl RedactionMode {
+    pub fn explicit() -> Self {
+        Self::Explicit
+    }
+
+    pub fn ordinal() -> Self {
+        Self::Ordinal
+    }
+
+    pub fn keyed(key: Vec<u8>) -> Self {
+        Self::Keyed(key)
+    }
+}
+
+/// Tracks redaction equality and ordinal state across one output set.
+pub struct Redactor {
+    mode: RedactionMode,
+    ordinals: BTreeMap<String, String>,
+    next_ordinal: usize,
+}
+
+impl Redactor {
+    pub fn new(mode: RedactionMode) -> Self {
+        Self {
+            mode,
+            ordinals: BTreeMap::new(),
+            next_ordinal: 1,
+        }
+    }
+
+    fn is_explicit(&self) -> bool {
+        matches!(self.mode, RedactionMode::Explicit)
+    }
+
+    fn redact_candidate(&mut self, candidate: &CandidateValue) -> CandidateValue {
+        let value = serde_json::to_value(candidate).expect("candidate values must be serializable");
+        let canonical = canonical_json(&value);
+        let marker = match &self.mode {
+            RedactionMode::Explicit => return candidate.clone(),
+            RedactionMode::Ordinal => {
+                let reference = match self.ordinals.get(&canonical) {
+                    Some(reference) => reference.clone(),
+                    None => {
+                        let reference = format!("v{}", self.next_ordinal);
+                        self.next_ordinal += 1;
+                        self.ordinals.insert(canonical, reference.clone());
+                        reference
+                    }
+                };
+                serde_json::json!({
+                    "redacted": true,
+                    "ref": reference,
+                    "scope": "ordinal",
+                })
+            }
+            RedactionMode::Keyed(key) => {
+                let mut mac = HmacSha256::new_from_slice(key)
+                    .expect("HMAC-SHA256 accepts keys of any non-empty length");
+                mac.update(canonical.as_bytes());
+                let digest = mac.finalize().into_bytes();
+                serde_json::json!({
+                    "redacted": true,
+                    "marker": format!("hmac-sha256:{}", hex_lower(&digest)),
+                    "scope": "key",
+                })
+            }
+        };
+
+        CandidateValue::Scalar(ScalarCandidateValue {
+            kind: ScalarCandidateKind::Scalar,
+            value: marker,
+        })
+    }
+}
 
 /// Write a canon entry as a single JSONL line.
 pub fn write_canon_entry(
@@ -27,32 +114,39 @@ pub fn write_escalation(
     escalation: &Escalation,
     explicit: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mode = if explicit {
+        RedactionMode::explicit()
+    } else {
+        RedactionMode::ordinal()
+    };
+    let mut redactor = Redactor::new(mode);
+    write_escalation_with_redactor(writer, escalation, &mut redactor)
+}
+
+/// Write an escalation using redaction state shared by one output set.
+pub fn write_escalation_with_redactor(
+    writer: &mut dyn Write,
+    escalation: &Escalation,
+    redactor: &mut Redactor,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut escalation = escalation.clone();
     escalation.claim_ids.sort_unstable();
-    if !explicit {
+    escalation.candidate_values.sort_by_key(candidate_sort_key);
+    if !redactor.is_explicit() {
         escalation.candidate_values = escalation
             .candidate_values
             .iter()
-            .map(redact_candidate)
+            .map(|candidate| redactor.redact_candidate(candidate))
             .collect();
     }
-    escalation.candidate_values.sort_by_key(candidate_sort_key);
 
     serde_json::to_writer(&mut *writer, &escalation)?;
     writer.write_all(b"\n")?;
     Ok(())
 }
 
-fn redact_candidate(candidate: &CandidateValue) -> CandidateValue {
-    let value = serde_json::to_value(candidate).unwrap_or(serde_json::Value::Null);
-    let value_hash = sha256_hex(canonical_json(&value).as_bytes());
-    CandidateValue::Scalar(ScalarCandidateValue {
-        kind: ScalarCandidateKind::Scalar,
-        value: serde_json::json!({
-            "redacted": true,
-            "sha256": value_hash,
-        }),
-    })
+fn hex_lower(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn candidate_sort_key(candidate: &CandidateValue) -> String {
@@ -66,7 +160,10 @@ fn candidate_sort_key(candidate: &CandidateValue) -> String {
 mod tests {
     use serde_json::json;
 
-    use super::{write_canon_entry, write_escalation};
+    use super::{
+        RedactionMode, Redactor, write_canon_entry, write_escalation,
+        write_escalation_with_redactor,
+    };
     use crate::contracts::canon_entry::{
         CanonEntry, ConvergenceState, ConvergenceStateKind, Explanation, ResolutionKind,
     };
@@ -236,6 +333,87 @@ mod tests {
 
         assert!(!rendered.contains("CANARY-SENSITIVE-VALUE"));
         assert!(rendered.contains("\"redacted\":true"));
-        assert!(rendered.contains("\"sha256\":\"sha256:"));
+        assert!(rendered.contains("\"ref\":\"v1\""));
+        assert!(rendered.contains("\"scope\":\"ordinal\""));
+        assert!(!rendered.contains("\"sha256\""));
+    }
+
+    #[test]
+    fn ordinal_redaction_is_first_appearance_and_shared_across_output_set() {
+        let first = escalation_with_values(&["beta", "alpha", "beta"], "first");
+        let second = escalation_with_values(&["gamma", "alpha"], "unrelated summary");
+        let mut output = Vec::new();
+        let mut redactor = Redactor::new(RedactionMode::ordinal());
+
+        write_escalation_with_redactor(&mut output, &first, &mut redactor).unwrap();
+        write_escalation_with_redactor(&mut output, &second, &mut redactor).unwrap();
+
+        let rows = output
+            .split(|byte| *byte == b'\n')
+            .filter(|row| !row.is_empty())
+            .map(|row| serde_json::from_slice::<serde_json::Value>(row).unwrap())
+            .collect::<Vec<_>>();
+        let first_refs = rows[0]["candidate_values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|candidate| candidate["value"]["ref"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        let second_refs = rows[1]["candidate_values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|candidate| candidate["value"]["ref"].as_str().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(first_refs, ["v1", "v2", "v2"]);
+        // Candidate values are emitted in canonical order, so alpha's v1 is
+        // encountered before gamma's v3 in the second escalation.
+        assert_eq!(second_refs, ["v1", "v3"]);
+        assert_eq!(rows[0]["candidate_values"][0]["value"]["scope"], "ordinal");
+    }
+
+    #[test]
+    fn keyed_redaction_matches_hmac_sha256_known_answer() {
+        let escalation = escalation_with_values(&["CANARY-SENSITIVE-VALUE"], "known answer");
+        let mut output = Vec::new();
+        let mut redactor = Redactor::new(RedactionMode::keyed(b"0123456789abcdef".to_vec()));
+
+        write_escalation_with_redactor(&mut output, &escalation, &mut redactor).unwrap();
+
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains(
+            "hmac-sha256:4b46ceaec08be6577e32390c43e3b66e2d92a88d0ea5e4f4e542bc3b154e9672"
+        ));
+        assert!(rendered.contains("\"scope\":\"key\""));
+        assert!(!rendered.contains("0123456789abcdef"));
+        assert!(!rendered.contains("CANARY-SENSITIVE-VALUE"));
+    }
+
+    fn escalation_with_values(values: &[&str], summary: &str) -> Escalation {
+        Escalation {
+            context: None,
+            event: "escalation.v0".to_string(),
+            bucket_id: "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+                .to_string(),
+            subject: SubjectRef {
+                kind: SubjectKind::Mapping,
+                id: "redaction.test".to_string(),
+            },
+            property_type: PropertyType::SemanticLabel,
+            reason: EscalationReason::Conflicted,
+            claim_ids: Vec::new(),
+            candidate_values: values
+                .iter()
+                .map(|value| {
+                    CandidateValue::Scalar(ScalarCandidateValue {
+                        kind: ScalarCandidateKind::Scalar,
+                        value: json!(value),
+                    })
+                })
+                .collect(),
+            recommended_action: RecommendedAction::Review,
+            summary: summary.to_string(),
+        }
     }
 }

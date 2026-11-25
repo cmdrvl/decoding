@@ -253,6 +253,22 @@ unknown-scale claims that were reconciled.
 Escalation reasons: `conflicted`, `missing_corroboration`, `no_resolution_path`.
 Recommended actions: `review`, `scan_more`, `fix_scanner`, `fix_policy`.
 
+The candidate values above are shown as raw values for `--explicit`. By default,
+each candidate value is replaced with a deterministic marker. Without
+`DECODING_REDACTION_KEY`, markers are ordinal references such as
+`{"redacted":true,"ref":"v1","scope":"ordinal"}`. Escalations are traversed in
+emitted order and candidates in their emitted order; equal canonical JSON values
+share a reference within that output set. Ordinals reveal only equality patterns
+and the number of distinct values, and are not comparable across runs on
+different inputs. With an operator-held `DECODING_REDACTION_KEY` of at least 16
+bytes, markers instead use keyed HMAC-SHA256 and are stable across inputs for
+that key. The key is never written to output, errors, witness records, or doctor
+reports. An empty or short key is a typed `E_REDACTION_KEY_INVALID` refusal.
+
+This is a breaking change from the former `candidate_values[].value.sha256`
+marker: that field is gone. A repository-wide search found no consumer outside
+decoding; callers should consume the new `ref`/`marker` plus `scope` fields.
+
 ### Convergence Report (`convergence.v0`)
 
 ```json

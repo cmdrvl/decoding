@@ -31,7 +31,7 @@
     {"name": "escalations", "flag": "--escalations", "type": "file_path", "output": true, "default": null, "description": "escalation.v0 JSONL destination"},
     {"name": "convergence", "flag": "--convergence", "type": "file_path", "output": true, "default": null, "description": "convergence.v0 JSON summary destination"},
     {"name": "json", "flag": "--json", "type": "flag", "default": false, "description": "JSON status on stderr; archaeology stdout remains canon_entry.v0 JSONL"},
-    {"name": "explicit", "flag": "--explicit", "type": "flag", "default": false, "description": "Emit raw candidate claim values in escalation output; default emits opaque value hashes"},
+    {"name": "explicit", "flag": "--explicit", "type": "flag", "default": false, "description": "Emit raw candidate claim values; default emits deterministic ordinal refs or keyed HMAC markers"},
     {"name": "describe", "flag": "--describe", "type": "flag", "default": false, "description": "Emit this embedded manifest verbatim without inputs"},
     {"name": "schema", "flag": "--schema", "type": "flag", "default": false, "description": "Emit JSON Schema for each canonical stdout record without inputs"},
     {"name": "robot_triage", "flag": "--robot-triage", "type": "flag", "default": false, "description": "Deprecated alias for doctor triage --json"}
@@ -49,7 +49,7 @@
         {"name": "escalations", "flag": "--escalations", "type": "file_path", "output": true, "default": null},
         {"name": "convergence", "flag": "--convergence", "type": "file_path", "output": true, "default": null},
         {"name": "json", "flag": "--json", "type": "flag", "default": false},
-        {"name": "explicit", "flag": "--explicit", "type": "flag", "default": false, "description": "Emit raw candidate claim values; default emits opaque value hashes"}
+        {"name": "explicit", "flag": "--explicit", "type": "flag", "default": false, "description": "Emit raw candidate claim values; default emits deterministic ordinal refs or keyed HMAC markers"}
       ],
       "output_schema": "canon_entry.v0",
       "status_stream": "stderr",
@@ -110,11 +110,13 @@
   "refusals": [
     {"code": "E_CLAIM_INVALID", "message": "Malformed JSONL, unknown fields or vocabulary, invalid claim_id, context, ancestry or value shape", "action": "fix"},
     {"code": "E_POLICY_INVALID", "message": "Invalid policy JSON, unknown policy keys, invalid numeric bounds or policy values", "action": "fix"},
+    {"code": "E_REDACTION_KEY_INVALID", "message": "DECODING_REDACTION_KEY is not valid UTF-8 or is shorter than 16 bytes", "action": "fix"},
     {"code": "E_IO", "message": "Cannot read an input or write an explicit output; operational error rather than domain refusal", "action": "retry"}
   ],
   "env_vars": [
     {"name": "NO_COLOR", "description": "Disables ANSI styling; decoding emits plain text when piped regardless"},
     {"name": "TERM", "description": "Terminal declaration; TERM=dumb is always ANSI-free"},
+    {"name": "DECODING_REDACTION_KEY", "description": "Optional operator-held HMAC-SHA256 key for redacted escalation markers; must be at least 16 bytes and is never emitted"},
     {"name": "DECODING_DOCTOR_FORCE_UNHEALTHY", "description": "Test-only health fixture that makes doctor report an error finding"}
   ],
   "formats": ["claim.v0 JSONL", "legacy.decode.v0 JSON", "canon_entry.v0 JSONL", "escalation.v0 JSONL", "convergence.v0 JSON"],

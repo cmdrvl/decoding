@@ -8,7 +8,7 @@ use crate::bucket::BucketStore;
 use crate::contracts::claim::{Claim, parse_claim};
 use crate::contracts::policy::load_policy;
 use crate::doctor;
-use crate::render::{write_canon_entry, write_escalation};
+use crate::render::{RedactionMode, Redactor, write_canon_entry, write_escalation_with_redactor};
 use crate::report::generate_report;
 use crate::resolve::{Decision, resolve_bucket};
 
@@ -261,6 +261,7 @@ fn execute_archaeology(args: &ArchaeologyArgs) -> Result<ExecutionSummary, CliFa
             CliFailure::refusal("E_POLICY_INVALID", message)
         }
     })?;
+    let redaction_mode = redaction_mode(args.explicit)?;
     let claims = load_claims(&args.claims)?;
 
     let mut store = BucketStore::default();
@@ -284,7 +285,7 @@ fn execute_archaeology(args: &ArchaeologyArgs) -> Result<ExecutionSummary, CliFa
         .count();
 
     write_canon_entries(args.output.as_ref(), &decisions)?;
-    write_escalations(args.escalations.as_ref(), &decisions, args.explicit)?;
+    write_escalations(args.escalations.as_ref(), &decisions, redaction_mode)?;
     write_convergence_report(args.convergence.as_ref(), &policy.policy_id, &decisions)?;
 
     Ok(ExecutionSummary {
@@ -296,6 +297,40 @@ fn execute_archaeology(args: &ArchaeologyArgs) -> Result<ExecutionSummary, CliFa
         canon_entry_count,
         escalation_count,
     })
+}
+
+fn redaction_mode(explicit: bool) -> Result<RedactionMode, CliFailure> {
+    let configured_key = match std::env::var("DECODING_REDACTION_KEY") {
+        Ok(key) => Some(key),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(CliFailure::refusal(
+                "E_REDACTION_KEY_INVALID",
+                "DECODING_REDACTION_KEY must be valid UTF-8 and at least 16 bytes",
+            ));
+        }
+    };
+
+    let key = configured_key.map(String::into_bytes);
+    let key = match key {
+        Some(key) if key.len() < 16 => {
+            return Err(CliFailure::refusal(
+                "E_REDACTION_KEY_INVALID",
+                "DECODING_REDACTION_KEY must be at least 16 bytes",
+            ));
+        }
+        Some(key) => Some(key),
+        None => None,
+    };
+
+    if explicit {
+        Ok(RedactionMode::explicit())
+    } else {
+        Ok(match key {
+            Some(key) => RedactionMode::keyed(key),
+            None => RedactionMode::ordinal(),
+        })
+    }
 }
 
 fn load_claims(paths: &[PathBuf]) -> Result<Vec<Claim>, CliFailure> {
@@ -364,18 +399,20 @@ fn write_canon_entries(
 fn write_escalations(
     output_path: Option<&PathBuf>,
     decisions: &[Decision],
-    explicit: bool,
+    mode: RedactionMode,
 ) -> Result<(), CliFailure> {
     let Some(path) = output_path else {
         return Ok(());
     };
     let mut writer = create_writer(Some(path))?;
+    let mut redactor = Redactor::new(mode);
 
     for decision in decisions {
         if let Decision::Escalated(escalated) = decision {
-            write_escalation(&mut writer, &escalated.escalation, explicit).map_err(|error| {
-                CliFailure::error(format!("failed to write escalations: {error}"))
-            })?;
+            write_escalation_with_redactor(&mut writer, &escalated.escalation, &mut redactor)
+                .map_err(|error| {
+                    CliFailure::error(format!("failed to write escalations: {error}"))
+                })?;
         }
     }
 

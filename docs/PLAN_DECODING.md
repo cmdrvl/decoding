@@ -549,6 +549,22 @@ Frozen field contract:
 | `recommended_action` | enum | `review`, `scan_more`, `fix_scanner`, `fix_policy` |
 | `summary` | string | short human-readable one-line explanation |
 
+Escalation candidate values are redacted unless `--explicit` is selected. The
+default marker is `{"redacted":true,"ref":"v1","scope":"ordinal"}` (then `v2`,
+`v3`, ...), assigned by first appearance in escalation output order and
+candidate emission order. Equality uses canonical JSON, so equal values share a
+reference within one output set. Ordinals reveal only equality patterns and the
+number of distinct values, not the values, and are not comparable across runs on
+different inputs. With an operator-held `DECODING_REDACTION_KEY` of at least 16
+bytes, the marker is instead `hmac-sha256:<hex>` over the canonical JSON using
+HMAC-SHA256 and `scope:"key"`. Empty or short keys refuse with
+`E_REDACTION_KEY_INVALID`; key material is never emitted in output, errors,
+witness records, or doctor reports.
+
+This replaces the former `candidate_values[].value.sha256` field. No consumer
+outside this repository was found in the workspace search; downstream callers
+must migrate to the `ref`/`marker` and `scope` fields.
+
 Escalations are the bounded review queue. If a bucket cannot produce one of
 the above reasons, the reason model is still underspecified.
 

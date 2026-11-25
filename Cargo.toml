@@ -19,6 +19,7 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 bigdecimal = "=0.4.11"
+hmac = "=0.12.1"
 sha2 = "0.10"
 indexmap = { version = "2", features = ["serde"] }
 spine-rules = { git = "https://github.com/cmdrvl/spine-rules", rev = "f96638f7c65597d658182253350f1320002976e3", version = "=0.3.1" }

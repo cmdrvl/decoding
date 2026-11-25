@@ -78,6 +78,11 @@ fn write_human_health() -> Result<Outcome, Box<dyn std::error::Error>> {
     writeln!(stdout, "claim_loaders_entered: false")?;
     writeln!(stdout, "policy_loaders_entered: false")?;
     writeln!(stdout, "output_writers_entered: false")?;
+    writeln!(
+        stdout,
+        "redaction_key_configured: {}",
+        std::env::var_os("DECODING_REDACTION_KEY").is_some()
+    )?;
     Ok(if report.healthy {
         Outcome::Clean
     } else {
@@ -167,7 +172,15 @@ fn write_robot_docs() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     writeln!(
         stdout,
-        "  add --explicit to archaeology for raw escalation candidate values; default output uses opaque hashes"
+        "  add --explicit to archaeology for raw escalation candidate values; default output uses ordinal refs or keyed HMAC markers"
+    )?;
+    writeln!(
+        stdout,
+        "  without DECODING_REDACTION_KEY, refs are deterministic v1, v2, ... by first appearance within one escalation output set; they reveal equality patterns and distinct-value count, not content"
+    )?;
+    writeln!(
+        stdout,
+        "  with DECODING_REDACTION_KEY (at least 16 bytes), markers are stable HMAC-SHA256 values; the key is never emitted"
     )?;
     writeln!(stdout)?;
     writeln!(stdout, "Routing and exits")?;
@@ -237,6 +250,16 @@ fn health_report() -> DoctorReport {
             "boundary_preserved",
             "doctor does not parse catalog records or derived claim files",
         ),
+        Finding {
+            id: "redaction_key_configured".to_owned(),
+            severity: Severity::Info,
+            message: if std::env::var_os("DECODING_REDACTION_KEY").is_some() {
+                "DECODING_REDACTION_KEY is configured; key material is never reported".to_owned()
+            } else {
+                "DECODING_REDACTION_KEY is not configured".to_owned()
+            },
+            fix: None,
+        },
     ];
     if forced_unhealthy {
         findings.push(Finding {
