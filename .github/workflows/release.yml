@@ -126,6 +126,7 @@ jobs:
           cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "$dist_dir/decoding"
           cp README.md "$dist_dir/"
           cp LICENSE "$dist_dir/"
+          cp operator.json "$dist_dir/"
           tar -czf "decoding-${{ steps.version.outputs.version }}-${{ matrix.target }}.tar.gz" -C "$dist_dir" .
 
       - name: Package archive (windows)
@@ -137,6 +138,7 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.bin }}" "$dist\\decoding.exe"
           Copy-Item README.md $dist
           Copy-Item LICENSE $dist
+          Copy-Item operator.json $dist
           Compress-Archive -Path "$dist\\*" -DestinationPath "decoding-${{ steps.version.outputs.version }}-${{ matrix.target }}.zip" -Force
 
       - name: Upload archive

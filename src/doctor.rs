@@ -2,57 +2,67 @@
 
 use std::io::{self, Write};
 
-use serde_json::{Value, json};
+use serde_json::Value;
+use spine_rules::contract::OperatorContract;
+use spine_rules::doctor::{DoctorMode, DoctorReport, Finding, Severity};
 
 use crate::cli::{DoctorArgs, DoctorCommand, Outcome};
-use crate::paths::config_footprint;
-
-const CONTRACT: &str = "cmdrvl.read_only_doctor.v1";
-const HEALTH_SCHEMA: &str = "decoding.doctor.health.v1";
-const CAPABILITIES_SCHEMA: &str = "decoding.doctor.capabilities.v1";
-const TRIAGE_SCHEMA: &str = "decoding.doctor.triage.v1";
 
 pub fn execute(args: &DoctorArgs) -> Result<Outcome, Box<dyn std::error::Error>> {
     if args.robot_triage {
-        write_json(robot_triage_report())?;
-        return Ok(Outcome::Clean);
+        return write_report(triage_report());
     }
 
     match &args.command {
         Some(DoctorCommand::Health(output)) => {
             if output.json {
-                write_json(health_report())?;
+                return write_report(health_report());
             } else {
                 write_human_health()?;
             }
         }
         Some(DoctorCommand::Capabilities(output)) => {
             if output.json {
-                write_json(capabilities_report())?;
+                return write_report(capabilities_report());
             } else {
                 write_human_capabilities()?;
             }
         }
-        Some(DoctorCommand::RobotDocs) => write_robot_docs()?,
-        None => write_human_health()?,
+        Some(DoctorCommand::Triage(output)) => {
+            if output.json {
+                return write_report(triage_report());
+            }
+            write_human_triage()?;
+        }
+        Some(DoctorCommand::RobotDocs(_)) => write_robot_docs()?,
+        None => {
+            if args.json {
+                return write_report(health_report());
+            }
+            write_human_health()?;
+        }
     }
 
     Ok(Outcome::Clean)
 }
 
-fn write_json(value: Value) -> Result<(), Box<dyn std::error::Error>> {
+fn write_report(report: DoctorReport) -> Result<Outcome, Box<dyn std::error::Error>> {
     let stdout = io::stdout();
     let mut handle = stdout.lock();
-    serde_json::to_writer_pretty(&mut handle, &value)?;
+    serde_json::to_writer_pretty(&mut handle, &report)?;
     handle.write_all(b"\n")?;
-    Ok(())
+    Ok(if report.healthy {
+        Outcome::Clean
+    } else {
+        Outcome::Escalations
+    })
 }
 
 fn write_human_health() -> Result<(), Box<dyn std::error::Error>> {
     let mut stdout = io::stdout().lock();
     writeln!(stdout, "decoding doctor health")?;
     writeln!(stdout, "status: healthy")?;
-    writeln!(stdout, "contract: {CONTRACT}")?;
+    writeln!(stdout, "contract: cmdrvl.doctor.v1")?;
     writeln!(stdout, "version: {}", env!("CARGO_PKG_VERSION"))?;
     writeln!(stdout, "read_only: true")?;
     writeln!(stdout, "config_root: {}", crate::paths::CANONICAL_ROOT)?;
@@ -66,27 +76,43 @@ fn write_human_health() -> Result<(), Box<dyn std::error::Error>> {
 fn write_human_capabilities() -> Result<(), Box<dyn std::error::Error>> {
     let mut stdout = io::stdout().lock();
     writeln!(stdout, "decoding doctor capabilities")?;
-    writeln!(stdout, "contract: {CONTRACT}")?;
+    writeln!(stdout, "contract: operator.v1")?;
     writeln!(stdout, "config_root: {}", crate::paths::CANONICAL_ROOT)?;
     writeln!(stdout, "commands:")?;
+    writeln!(stdout, "  decoding --describe")?;
+    writeln!(stdout, "  decoding --schema")?;
+    writeln!(stdout, "  decoding capabilities --json")?;
+    writeln!(stdout, "  decoding robot-docs guide")?;
     writeln!(stdout, "  decoding doctor health [--json]")?;
     writeln!(stdout, "  decoding doctor capabilities [--json]")?;
+    writeln!(stdout, "  decoding doctor triage --json")?;
     writeln!(stdout, "  decoding doctor robot-docs")?;
-    writeln!(stdout, "  decoding doctor --robot-triage")?;
+    writeln!(stdout, "  decoding doctor triage --json")?;
+    writeln!(stdout, "  decoding --robot-triage (legacy alias)")?;
     writeln!(stdout, "fix_mode: unavailable")?;
     writeln!(stdout, "online_probes: unavailable")?;
     Ok(())
 }
 
+fn write_human_triage() -> Result<(), Box<dyn std::error::Error>> {
+    let mut stdout = io::stdout().lock();
+    writeln!(stdout, "decoding doctor triage")?;
+    writeln!(stdout, "contract: cmdrvl.doctor.v1")?;
+    writeln!(stdout, "status: healthy")?;
+    writeln!(stdout, "next_action: decoding capabilities --json")?;
+    Ok(())
+}
+
 fn write_robot_docs() -> Result<(), Box<dyn std::error::Error>> {
     let mut stdout = io::stdout().lock();
-    writeln!(stdout, "decoding doctor robot-docs")?;
-    writeln!(stdout, "contract: {CONTRACT}")?;
+    writeln!(stdout, "# decoding robot-docs guide")?;
+    writeln!(stdout, "Alias: decoding doctor robot-docs [guide]")?;
+    writeln!(stdout, "contract: cmdrvl.doctor.v1")?;
     writeln!(stdout)?;
     writeln!(stdout, "Purpose")?;
     writeln!(
         stdout,
-        "  Provide deterministic, read-only diagnostics for the decoding CLI."
+        "  Converge derived claim.v0 JSONL into canon_entry.v0, escalation.v0 and convergence.v0."
     )?;
     writeln!(
         stdout,
@@ -94,11 +120,59 @@ fn write_robot_docs() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     writeln!(stdout)?;
     writeln!(stdout, "Commands")?;
+    writeln!(stdout, "  decoding --describe")?;
+    writeln!(stdout, "  decoding --schema")?;
+    writeln!(stdout, "  decoding capabilities --json")?;
+    writeln!(stdout, "  decoding robot-docs guide")?;
     writeln!(stdout, "  decoding doctor health --json")?;
     writeln!(stdout, "  decoding doctor capabilities --json")?;
-    writeln!(stdout, "  decoding doctor --robot-triage")?;
+    writeln!(stdout, "  decoding doctor triage --json")?;
+    writeln!(stdout, "  decoding --robot-triage (legacy alias)")?;
+    writeln!(
+        stdout,
+        "  decoding archaeology <CLAIMS>... --policy <FILE> [--out <FILE>] [--escalations <FILE>] [--convergence <FILE>] [--json]"
+    )?;
+    writeln!(stdout)?;
+    writeln!(stdout, "Routing and exits")?;
+    writeln!(
+        stdout,
+        "  stdout: canon_entry.v0 JSONL unless --out is explicit. --schema describes each record."
+    )?;
+    writeln!(
+        stdout,
+        "  --json: status on stderr; refusal code/detail at /refusal/code and /refusal/detail."
+    )?;
+    writeln!(
+        stdout,
+        "  0: all buckets resolved or discovery completed; 1: escalations; 2: refusal, usage or I/O error."
+    )?;
+    writeln!(stdout, "Refusal and operational codes")?;
+    let manifest: Value = serde_json::from_str(crate::OPERATOR_JSON)?;
+    if let Some(refusals) = manifest["refusals"].as_array() {
+        for refusal in refusals {
+            writeln!(
+                stdout,
+                "  {}: {} (action: {})",
+                refusal["code"].as_str().unwrap_or_default(),
+                refusal["message"].as_str().unwrap_or_default(),
+                refusal["action"].as_str().unwrap_or_default()
+            )?;
+        }
+    }
     writeln!(stdout)?;
     writeln!(stdout, "Safety")?;
+    writeln!(
+        stdout,
+        "  Explicit output paths replace existing files; keep them distinct from inputs and each other."
+    )?;
+    writeln!(
+        stdout,
+        "  No stdin, network, ambient witness recording or implicit config files. No --no-witness flag is needed."
+    )?;
+    writeln!(
+        stdout,
+        "  Directly observed catalog metadata bypasses decoding. Preserve exact decimal JSON numbers."
+    )?;
     writeln!(
         stdout,
         "  doctor --fix is intentionally absent in this release."
@@ -110,313 +184,112 @@ fn write_robot_docs() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn health_report() -> Value {
-    json!({
-        "schema": HEALTH_SCHEMA,
-        "contract": CONTRACT,
-        "status": "healthy",
-        "healthy": true,
-        "tool": tool_identity(),
-        "config_footprint": config_footprint(),
-        "checks": [
-            {
-                "id": "cli_loaded",
-                "status": "pass",
-                "detail": "decoding CLI metadata is available"
-            },
-            {
-                "id": "doctor_read_only",
-                "status": "pass",
-                "detail": "doctor dispatch returns before archaeology claim, policy, and output loaders"
-            },
-            {
-                "id": "fix_mode_disabled",
-                "status": "pass",
-                "detail": "doctor --fix is not part of the clap surface"
-            },
-            {
-                "id": "boundary_preserved",
-                "status": "pass",
-                "detail": "doctor does not parse catalog records or derived claim files"
-            }
+fn health_report() -> DoctorReport {
+    DoctorReport {
+        schema_version: spine_rules::doctor::DOCTOR_SCHEMA_VERSION.to_owned(),
+        mode: DoctorMode::Health,
+        tool: "decoding".to_owned(),
+        tool_version: env!("CARGO_PKG_VERSION").to_owned(),
+        healthy: true,
+        findings: vec![
+            finding("cli_loaded", "decoding CLI metadata is available"),
+            finding(
+                "doctor_read_only",
+                "doctor dispatch returns before archaeology claim, policy, and output loaders",
+            ),
+            finding(
+                "fix_mode_disabled",
+                "doctor --fix is not part of the clap surface",
+            ),
+            finding(
+                "boundary_preserved",
+                "doctor does not parse catalog records or derived claim files",
+            ),
         ],
-        "observed_inputs": {
-            "claims": [],
-            "policy": null,
-            "output": null,
-            "escalations": null,
-            "convergence": null
-        },
-        "side_effects": side_effects(),
-        "domain_boundaries": domain_boundaries()
-    })
+        contract: None,
+        next_actions: None,
+    }
 }
 
-fn capabilities_report() -> Value {
-    json!({
-        "schema": CAPABILITIES_SCHEMA,
-        "contract": CONTRACT,
-        "tool": tool_identity(),
-        "config_footprint": config_footprint(),
-        "commands": [
-            {
-                "command": "decoding doctor health",
-                "json": true,
-                "human": true,
-                "description": "read-only health summary"
-            },
-            {
-                "command": "decoding doctor capabilities",
-                "json": true,
-                "human": true,
-                "description": "machine-readable command and safety contract"
-            },
-            {
-                "command": "decoding doctor robot-docs",
-                "json": false,
-                "human": true,
-                "description": "deterministic operating notes for agents"
-            },
-            {
-                "command": "decoding doctor --robot-triage",
-                "json": true,
-                "human": false,
-                "description": "prioritized read-only triage guidance"
-            }
-        ],
-        "core_command": {
-            "command": "decoding archaeology <CLAIMS>... --policy <FILE>",
-            "input_contract": "claim.v0",
-            "claim_features": {
-                "exact_context_bucketing": true,
-                "source_ancestry_components": true,
-                "unknown_ancestry_independence_credit": false,
-                "exact_decimal_arithmetic": true,
-                "decimal_limits": {
-                    "significant_digits": crate::numeric::MAX_DECIMAL_DIGITS,
-                    "normalized_absolute_scale": crate::numeric::MAX_DECIMAL_SCALE,
-                    "json_token_bytes": 4096
-                }
-            },
-            "policy_contract": "legacy.decode.v0",
-            "output_contracts": ["canon_entry.v0", "escalation.v0", "convergence.v0"],
-            "exit_codes": {
-                "0": "all claims converged or resolved",
-                "1": "escalations emitted",
-                "2": "refusal, invalid policy, contract violation, or operational error"
-            }
-        },
-        "fix_mode": {
-            "available": false,
-            "reason": "read-only first slice; mutation mode requires separate detector, backup, inverse, fixture, and undo work"
-        },
-        "side_effects": side_effects(),
-        "domain_boundaries": domain_boundaries()
-    })
+fn capabilities_report() -> DoctorReport {
+    DoctorReport {
+        schema_version: spine_rules::doctor::DOCTOR_SCHEMA_VERSION.to_owned(),
+        mode: DoctorMode::Capabilities,
+        tool: "decoding".to_owned(),
+        tool_version: env!("CARGO_PKG_VERSION").to_owned(),
+        healthy: true,
+        findings: vec![finding(
+            "operator_contract_loaded",
+            "operator.v1 contract is available",
+        )],
+        contract: Some(operator_contract()),
+        next_actions: None,
+    }
 }
 
-fn robot_triage_report() -> Value {
-    json!({
-        "schema": TRIAGE_SCHEMA,
-        "contract": CONTRACT,
-        "status": "healthy",
-        "healthy": true,
-        "tool": tool_identity(),
-        "config_footprint": config_footprint(),
-        "recommended_actions": [
-            {
-                "priority": 1,
-                "action": "run decoding doctor capabilities --json",
-                "reason": "discover the supported read-only diagnostic contract"
-            },
-            {
-                "priority": 2,
-                "action": "run decoding archaeology --help",
-                "reason": "inspect the domain command without loading claim data"
-            },
-            {
-                "priority": 3,
-                "action": "run decoding archaeology <claims.jsonl> --policy <policy.json> on a fixture or approved input",
-                "reason": "execute convergence only after claim and policy paths are explicit"
-            }
-        ],
-        "known_failure_modes": [
-            {
-                "id": "invalid_claim_contract",
-                "exit_code": 2,
-                "classification": "refusal",
-                "operator_action": "fix claim.v0 producer or input fixture"
-            },
-            {
-                "id": "unknown_policy_key",
-                "exit_code": 2,
-                "classification": "refusal",
-                "operator_action": "fix policy JSON to match legacy.decode.v0"
-            },
-            {
-                "id": "unresolved_or_conflicting_bucket",
-                "exit_code": 1,
-                "classification": "escalation",
-                "operator_action": "review escalation.v0 or scan additional evidence"
-            }
-        ],
-        "side_effects": side_effects()
-    })
+fn triage_report() -> DoctorReport {
+    DoctorReport {
+        schema_version: spine_rules::doctor::DOCTOR_SCHEMA_VERSION.to_owned(),
+        mode: DoctorMode::Triage,
+        tool: "decoding".to_owned(),
+        tool_version: env!("CARGO_PKG_VERSION").to_owned(),
+        healthy: true,
+        findings: vec![finding(
+            "triage_available",
+            "read-only triage guidance is available",
+        )],
+        contract: None,
+        next_actions: Some(vec![
+            "run decoding capabilities --json".to_owned(),
+            "run decoding archaeology --help".to_owned(),
+            "run decoding archaeology <claims.jsonl> --policy <policy.json> on an approved input"
+                .to_owned(),
+        ]),
+    }
 }
 
-fn tool_identity() -> Value {
-    json!({
-        "name": "decoding",
-        "version": env!("CARGO_PKG_VERSION"),
-        "role": "deterministic convergence engine for legacy-system archaeology",
-        "primary_input": "derived claim.v0",
-        "primary_outputs": ["canon_entry.v0", "escalation.v0", "convergence.v0"]
-    })
+fn finding(id: &str, message: &str) -> Finding {
+    Finding {
+        id: id.to_owned(),
+        severity: Severity::Info,
+        message: message.to_owned(),
+        fix: None,
+    }
 }
 
-fn side_effects() -> Value {
-    json!({
-        "reads_stdin": false,
-        "reads_claim_files": false,
-        "reads_policy_files": false,
-        "detects_claim_format": false,
-        "parses_claim_contracts": false,
-        "loads_decode_policy": false,
-        "groups_buckets": false,
-        "resolves_claims": false,
-        "renders_canon_entries": false,
-        "renders_escalations": false,
-        "renders_convergence_report": false,
-        "writes_output_files": false,
-        "writes_doctor_artifacts": false,
-        "uses_network": false,
-        "changes_cwd": false
-    })
-}
-
-fn domain_boundaries() -> Value {
-    json!({
-        "owns": [
-            "derived claim.v0 convergence",
-            "canon_entry.v0 rendering",
-            "escalation.v0 rendering",
-            "convergence.v0 summaries"
-        ],
-        "does_not_own": [
-            "direct metadata catalog ingestion",
-            "catalog record parsing",
-            "scanner repair",
-            "gold truth minting",
-            "production database mutation"
-        ]
-    })
+fn operator_contract() -> OperatorContract {
+    OperatorContract::parse(crate::OPERATOR_JSON)
+        .expect("embedded operator.json must parse as operator.v1")
 }
 
 #[cfg(test)]
 mod tests {
-    use serde_json::Value;
-
-    use super::{capabilities_report, health_report, robot_triage_report};
+    use super::{capabilities_report, health_report, triage_report};
 
     #[test]
-    fn health_report_is_read_only() {
+    fn health_report_is_v1_and_healthy() {
         let report = health_report();
-
-        assert_eq!(
-            report.pointer("/healthy").and_then(Value::as_bool),
-            Some(true)
-        );
-        assert_eq!(
-            report
-                .pointer("/observed_inputs/claims")
-                .and_then(Value::as_array)
-                .map(Vec::len),
-            Some(0)
-        );
-        assert_eq!(
-            report
-                .pointer("/side_effects/reads_claim_files")
-                .and_then(Value::as_bool),
-            Some(false)
-        );
-        assert_eq!(
-            report
-                .pointer("/side_effects/writes_output_files")
-                .and_then(Value::as_bool),
-            Some(false)
-        );
-        assert_eq!(
-            report
-                .pointer("/side_effects/writes_doctor_artifacts")
-                .and_then(Value::as_bool),
-            Some(false)
-        );
-        assert_eq!(
-            report
-                .pointer("/config_footprint/canonical_root")
-                .and_then(Value::as_str),
-            Some("~/.cmdrvl")
-        );
-        assert_eq!(
-            report
-                .pointer("/config_footprint/legacy_migration_required")
-                .and_then(Value::as_bool),
-            Some(false)
-        );
+        assert_eq!(report.schema_version, "cmdrvl.doctor.v1");
+        assert_eq!(report.mode, spine_rules::doctor::DoctorMode::Health);
+        assert!(report.healthy);
+        assert!(report.validate().is_empty(), "{:?}", report.validate());
     }
 
     #[test]
-    fn capabilities_report_disables_fix_mode() {
+    fn capabilities_report_embeds_valid_operator_contract() {
         let report = capabilities_report();
-
-        assert_eq!(
-            report
-                .pointer("/fix_mode/available")
-                .and_then(Value::as_bool),
-            Some(false)
-        );
-        assert_eq!(
-            report
-                .pointer("/core_command/output_contracts/0")
-                .and_then(Value::as_str),
-            Some("canon_entry.v0")
-        );
-        assert_eq!(
-            report
-                .pointer("/config_footprint/managed_state_paths")
-                .and_then(Value::as_array)
-                .map(Vec::len),
-            Some(0)
-        );
+        assert_eq!(report.mode, spine_rules::doctor::DoctorMode::Capabilities);
+        let contract = report.contract.as_ref().unwrap();
+        assert!(contract.validate().is_empty(), "{:?}", contract.validate());
+        assert_eq!(contract.name, "decoding");
     }
 
     #[test]
-    fn robot_triage_mentions_refusal_and_escalation_paths() {
-        let report = robot_triage_report();
-
-        assert!(
-            report
-                .pointer("/known_failure_modes")
-                .and_then(Value::as_array)
-                .is_some_and(|modes| modes
-                    .iter()
-                    .any(|mode| mode.get("classification").and_then(Value::as_str)
-                        == Some("refusal")))
-        );
-        assert!(
-            report
-                .pointer("/known_failure_modes")
-                .and_then(Value::as_array)
-                .is_some_and(|modes| modes
-                    .iter()
-                    .any(|mode| mode.get("classification").and_then(Value::as_str)
-                        == Some("escalation")))
-        );
-        assert_eq!(
-            report
-                .pointer("/config_footprint/deprecation_notices")
-                .and_then(Value::as_str),
-            Some("~/.cmdrvl/notices/deprecated-paths.jsonl")
-        );
+    fn triage_report_is_v1_with_actions() {
+        let report = triage_report();
+        assert_eq!(report.mode, spine_rules::doctor::DoctorMode::Triage);
+        assert!(report.healthy);
+        assert!(!report.next_actions.as_ref().unwrap().is_empty());
+        assert!(report.validate().is_empty(), "{:?}", report.validate());
     }
 }

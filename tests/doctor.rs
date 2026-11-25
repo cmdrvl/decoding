@@ -25,28 +25,12 @@ fn stdout_json(args: &[&str]) -> Result<Value, Box<dyn std::error::Error>> {
 fn doctor_health_json_is_read_only() -> Result<(), Box<dyn std::error::Error>> {
     let report = stdout_json(&["doctor", "health", "--json"])?;
 
-    assert_eq!(report["schema"], "decoding.doctor.health.v1");
+    assert_eq!(report["schema_version"], "cmdrvl.doctor.v1");
+    assert_eq!(report["mode"], "health");
     assert_eq!(report["healthy"], true);
-    assert_eq!(report["config_footprint"]["canonical_root"], "~/.cmdrvl");
-    assert_eq!(
-        report["config_footprint"]["legacy_paths"],
-        serde_json::json!([])
-    );
-    assert_eq!(
-        report["config_footprint"]["legacy_migration_required"],
-        false
-    );
-    assert_eq!(
-        report["observed_inputs"]["claims"]
-            .as_array()
-            .unwrap()
-            .len(),
-        0
-    );
-    assert_eq!(report["side_effects"]["reads_claim_files"], false);
-    assert_eq!(report["side_effects"]["reads_policy_files"], false);
-    assert_eq!(report["side_effects"]["writes_output_files"], false);
-    assert_eq!(report["side_effects"]["writes_doctor_artifacts"], false);
+    assert_eq!(report["findings"].as_array().unwrap().len(), 4);
+    assert!(report.get("contract").is_none());
+    assert!(report.get("next_actions").is_none());
     assert!(
         !Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(".doctor")
@@ -59,33 +43,10 @@ fn doctor_health_json_is_read_only() -> Result<(), Box<dyn std::error::Error>> {
 fn doctor_capabilities_json_describes_contracts() -> Result<(), Box<dyn std::error::Error>> {
     let report = stdout_json(&["doctor", "capabilities", "--json"])?;
 
-    assert_eq!(report["schema"], "decoding.doctor.capabilities.v1");
-    assert_eq!(report["fix_mode"]["available"], false);
-    assert_eq!(
-        report["config_footprint"]["managed_config_paths"],
-        serde_json::json!([])
-    );
-    assert_eq!(
-        report["config_footprint"]["deprecation_notices"],
-        "~/.cmdrvl/notices/deprecated-paths.jsonl"
-    );
-    assert_eq!(report["core_command"]["input_contract"], "claim.v0");
-    assert_eq!(
-        report["core_command"]["claim_features"]["exact_context_bucketing"],
-        true
-    );
-    assert_eq!(
-        report["core_command"]["claim_features"]["source_ancestry_components"],
-        true
-    );
-    assert_eq!(
-        report["core_command"]["claim_features"]["exact_decimal_arithmetic"],
-        true
-    );
-    assert_eq!(
-        report["core_command"]["output_contracts"][2],
-        "convergence.v0"
-    );
+    assert_eq!(report["schema_version"], "cmdrvl.doctor.v1");
+    assert_eq!(report["mode"], "capabilities");
+    assert_eq!(report["contract"]["schema_version"], "operator.v1");
+    assert_eq!(report["contract"]["name"], "decoding");
     Ok(())
 }
 
@@ -134,14 +95,10 @@ fn output_path_accepts_output_and_out_aliases() -> Result<(), Box<dyn std::error
 fn doctor_robot_triage_json_lists_agent_actions() -> Result<(), Box<dyn std::error::Error>> {
     let report = stdout_json(&["doctor", "--robot-triage"])?;
 
-    assert_eq!(report["schema"], "decoding.doctor.triage.v1");
-    assert_eq!(report["status"], "healthy");
-    assert_eq!(
-        report["config_footprint"]["migration_log"],
-        "~/.cmdrvl/migrations/applied.jsonl"
-    );
-    assert!(report["recommended_actions"].as_array().unwrap().len() >= 3);
-    assert_eq!(report["side_effects"]["resolves_claims"], false);
+    assert_eq!(report["schema_version"], "cmdrvl.doctor.v1");
+    assert_eq!(report["mode"], "triage");
+    assert_eq!(report["healthy"], true);
+    assert!(report["next_actions"].as_array().unwrap().len() >= 3);
     Ok(())
 }
 

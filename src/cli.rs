@@ -13,11 +13,23 @@ use crate::report::generate_report;
 use crate::resolve::{Decision, resolve_bucket};
 
 /// Deterministic convergence engine for legacy-system archaeology.
-#[derive(Parser, Debug)]
-#[command(name = "decoding", version, about)]
+#[derive(Parser, Debug, Default)]
+#[command(name = "decoding", version, about, arg_required_else_help = true)]
 pub struct Cli {
+    /// Print the embedded operator.v1 manifest and exit.
+    #[arg(long, conflicts_with = "schema")]
+    pub describe: bool,
+
+    /// Print JSON Schema for each canon_entry.v0 stdout record and exit.
+    #[arg(long)]
+    pub schema: bool,
+
+    /// Emit machine-readable triage guidance (alias of `doctor triage --json`).
+    #[arg(long)]
+    pub robot_triage: bool,
+
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -26,6 +38,10 @@ pub enum Command {
     Archaeology(ArchaeologyArgs),
     /// Inspect decoding health and capabilities without reading or writing claim data.
     Doctor(DoctorArgs),
+    /// Describe supported commands, contracts, and safety envelope.
+    Capabilities(DoctorOutputArgs),
+    /// Print deterministic operator documentation for agents.
+    RobotDocs(RobotDocsArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -39,7 +55,7 @@ pub struct ArchaeologyArgs {
     pub policy: PathBuf,
 
     /// Canon entry JSONL output (default: stdout).
-    #[arg(long, visible_alias = "out")]
+    #[arg(long = "out", visible_alias = "output")]
     pub output: Option<PathBuf>,
 
     /// Escalation JSONL output.
@@ -57,6 +73,10 @@ pub struct ArchaeologyArgs {
 
 #[derive(Args, Debug)]
 pub struct DoctorArgs {
+    /// Emit the canonical cmdrvl.doctor.v1 health report.
+    #[arg(long)]
+    pub json: bool,
+
     /// Emit machine-readable triage guidance for headless agents.
     #[arg(long)]
     pub robot_triage: bool,
@@ -71,8 +91,22 @@ pub enum DoctorCommand {
     Health(DoctorOutputArgs),
     /// Describe supported commands, contracts, and safety envelope.
     Capabilities(DoctorOutputArgs),
+    /// Report prioritized next actions for headless agents.
+    Triage(DoctorOutputArgs),
     /// Print deterministic operator documentation for agents.
-    RobotDocs,
+    RobotDocs(RobotDocsArgs),
+}
+
+#[derive(Args, Debug, Default)]
+pub struct RobotDocsArgs {
+    #[command(subcommand)]
+    pub command: Option<RobotDocsCommand>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum RobotDocsCommand {
+    /// Print the bounded operating guide.
+    Guide,
 }
 
 #[derive(Args, Debug, Clone, Copy, Default)]
@@ -112,8 +146,23 @@ pub fn parse() -> Cli {
 
 /// Execute the parsed CLI command.
 pub fn execute(cli: Cli) -> Result<Outcome, Box<dyn std::error::Error>> {
+    if cli.describe || cli.schema {
+        io::stdout().lock().write_all(if cli.describe {
+            crate::OPERATOR_JSON.as_bytes()
+        } else {
+            crate::OUTPUT_SCHEMA.as_bytes()
+        })?;
+        return Ok(Outcome::Clean);
+    }
+    if cli.robot_triage {
+        return doctor::execute(&DoctorArgs {
+            json: false,
+            robot_triage: true,
+            command: None,
+        });
+    }
     match cli.command {
-        Command::Archaeology(args) => match execute_archaeology(&args) {
+        Some(Command::Archaeology(args)) => match execute_archaeology(&args) {
             Ok(summary) => {
                 emit_success_status(&args, &summary)?;
                 Ok(summary.outcome)
@@ -129,7 +178,27 @@ pub fn execute(cli: Cli) -> Result<Outcome, Box<dyn std::error::Error>> {
                 }
             },
         },
-        Command::Doctor(args) => doctor::execute(&args),
+        Some(Command::Doctor(args)) => doctor::execute(&args),
+        Some(Command::Capabilities(output)) => {
+            if output.json {
+                io::stdout()
+                    .lock()
+                    .write_all(crate::OPERATOR_JSON.as_bytes())?;
+                Ok(Outcome::Clean)
+            } else {
+                doctor::execute(&DoctorArgs {
+                    json: false,
+                    robot_triage: false,
+                    command: Some(DoctorCommand::Capabilities(output)),
+                })
+            }
+        }
+        Some(Command::RobotDocs(args)) => doctor::execute(&DoctorArgs {
+            json: false,
+            robot_triage: false,
+            command: Some(DoctorCommand::RobotDocs(args)),
+        }),
+        None => unreachable!("clap requires a subcommand or an introspection flag"),
     }
 }
 
@@ -143,6 +212,7 @@ struct ExecutionSummary {
 #[derive(Debug)]
 struct CliFailure {
     kind: CliFailureKind,
+    code: &'static str,
     reason: String,
 }
 
@@ -153,9 +223,10 @@ enum CliFailureKind {
 }
 
 impl CliFailure {
-    fn refusal(reason: impl Into<String>) -> Self {
+    fn refusal(code: &'static str, reason: impl Into<String>) -> Self {
         Self {
             kind: CliFailureKind::Refusal,
+            code,
             reason: reason.into(),
         }
     }
@@ -163,6 +234,7 @@ impl CliFailure {
     fn error(reason: impl Into<String>) -> Self {
         Self {
             kind: CliFailureKind::Error,
+            code: "E_IO",
             reason: reason.into(),
         }
     }
@@ -182,7 +254,7 @@ fn execute_archaeology(args: &ArchaeologyArgs) -> Result<ExecutionSummary, CliFa
         if error.reason.starts_with("failed to read policy `") {
             CliFailure::error(message)
         } else {
-            CliFailure::refusal(message)
+            CliFailure::refusal("E_POLICY_INVALID", message)
         }
     })?;
     let claims = load_claims(&args.claims)?;
@@ -248,11 +320,14 @@ fn load_claims(paths: &[PathBuf]) -> Result<Vec<Claim>, CliFailure> {
             }
 
             let claim = parse_claim(trimmed).map_err(|error| {
-                CliFailure::refusal(format!(
-                    "failed to parse claims file `{}` line {}: {error}",
-                    path.display(),
-                    line_index + 1
-                ))
+                CliFailure::refusal(
+                    "E_CLAIM_INVALID",
+                    format!(
+                        "failed to parse claims file `{}` line {}: {error}",
+                        path.display(),
+                        line_index + 1
+                    ),
+                )
             })?;
             claims.push(claim);
         }
@@ -362,6 +437,7 @@ fn emit_success_status(
             "{}",
             serde_json::json!({
                 "status": status,
+                "version": env!("CARGO_PKG_VERSION"),
                 "canon_entry_count": summary.canon_entry_count,
                 "escalation_count": summary.escalation_count,
             })
@@ -389,10 +465,12 @@ fn emit_refusal_status(
             serde_json::json!({
                 "status": "refusal",
                 "reason": error.reason,
+                "version": env!("CARGO_PKG_VERSION"),
+                "refusal": {"code": error.code, "detail": error.reason},
             })
         )?;
     } else {
-        writeln!(io::stderr(), "refusal: {}", error.reason)?;
+        writeln!(io::stderr(), "refusal [{}]: {}", error.code, error.reason)?;
     }
 
     Ok(())
@@ -409,10 +487,12 @@ fn emit_error_status(
             serde_json::json!({
                 "status": "error",
                 "reason": error.reason,
+                "version": env!("CARGO_PKG_VERSION"),
+                "error": {"code": error.code, "detail": error.reason},
             })
         )?;
     } else {
-        writeln!(io::stderr(), "error: {}", error.reason)?;
+        writeln!(io::stderr(), "error [{}]: {}", error.code, error.reason)?;
     }
 
     Ok(())
@@ -435,14 +515,15 @@ mod tests {
         let convergence = temp_dir.path().join("convergence.json");
 
         let outcome = execute(Cli {
-            command: Command::Archaeology(ArchaeologyArgs {
+            command: Some(Command::Archaeology(ArchaeologyArgs {
                 claims: vec![claims_fixture_path("mixed_source.jsonl")],
                 policy: policy_fixture_path("legacy.decode.v0.json"),
                 output: Some(output.clone()),
                 escalations: Some(escalations.clone()),
                 convergence: Some(convergence.clone()),
                 json: false,
-            }),
+            })),
+            ..Cli::default()
         })
         .unwrap();
 
@@ -462,14 +543,15 @@ mod tests {
         let output = temp_dir.path().join("canon.jsonl");
 
         let outcome = execute(Cli {
-            command: Command::Archaeology(ArchaeologyArgs {
+            command: Some(Command::Archaeology(ArchaeologyArgs {
                 claims: vec![claims_fixture_path("refusal_invalid.jsonl")],
                 policy: policy_fixture_path("legacy.decode.v0.json"),
                 output: Some(output),
                 escalations: None,
                 convergence: None,
                 json: true,
-            }),
+            })),
+            ..Cli::default()
         })
         .unwrap();
 
@@ -482,14 +564,15 @@ mod tests {
         let missing_parent = temp_dir.path().join("missing").join("canon.jsonl");
 
         let outcome = execute(Cli {
-            command: Command::Archaeology(ArchaeologyArgs {
+            command: Some(Command::Archaeology(ArchaeologyArgs {
                 claims: vec![claims_fixture_path("mixed_source.jsonl")],
                 policy: policy_fixture_path("legacy.decode.v0.json"),
                 output: Some(missing_parent),
                 escalations: None,
                 convergence: None,
                 json: true,
-            }),
+            })),
+            ..Cli::default()
         })
         .unwrap();
 

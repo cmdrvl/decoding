@@ -211,7 +211,7 @@ dependencies = [
 
 [[package]]
 name = "decoding"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "assert_cmd",
  "bigdecimal",
@@ -222,6 +222,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "spine-rules",
  "tempfile",
 ]
 
@@ -624,6 +625,16 @@ name = "similar"
 version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
+
+[[package]]
+name = "spine-rules"
+version = "0.3.0"
+source = "git+https://github.com/cmdrvl/spine-rules?rev=b2a8149#b2a81493b204201143171586499979311372fbe9"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+]
 
 [[package]]
 name = "strsim"

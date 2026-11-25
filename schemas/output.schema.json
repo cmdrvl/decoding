@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "canon_entry.v0",
+  "description": "One canonical JSONL stdout record. Parse JSON numbers as exact decimals. Status and refusals use stderr; escalation.v0 and convergence.v0 use explicit output paths.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event", "bucket_id", "subject", "property_type", "canonical_value", "policy_id", "convergence", "explain"],
+  "properties": {
+    "event": {"const": "canon_entry.v0"},
+    "bucket_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "subject": {"$ref": "#/$defs/subject"},
+    "property_type": {"enum": ["exists", "schema", "constraint", "reads", "writes", "depends_on", "used_by", "schedule", "valid_values", "numeric_scalar", "semantic_label", "liveness", "authoritative_for"]},
+    "canonical_value": {},
+    "policy_id": {"type": "string"},
+    "context": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"type": "string", "pattern": "\\S"},
+      "additionalProperties": {"type": "string", "pattern": "\\S"}
+    },
+    "convergence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "source_count", "claim_count"],
+      "properties": {
+        "state": {"enum": ["single_source", "converging", "converged"]},
+        "source_count": {"type": "integer", "minimum": 0},
+        "claim_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "explain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["winner_claim_ids", "compatible_claim_ids", "resolution_kind"],
+      "properties": {
+        "winner_claim_ids": {"$ref": "#/$defs/claim_ids"},
+        "compatible_claim_ids": {"$ref": "#/$defs/claim_ids"},
+        "resolution_kind": {"enum": ["single_source", "corroborated", "priority_break", "liveness_fold", "scale_inferred"]},
+        "scale_inference": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["canonical_scale", "inferred_factors"],
+          "properties": {
+            "canonical_scale": {"type": "string"},
+            "inferred_factors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["claim_id", "factor"],
+                "properties": {
+                  "claim_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+                  "factor": {"type": "number"}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {"enum": ["table", "column", "view", "job", "procedure", "report", "feed", "mapping", "consumer", "artifact", "extract", "report_line", "fund", "holding_line"]},
+        "id": {"type": "string"}
+      }
+    },
+    "claim_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    }
+  }
+}

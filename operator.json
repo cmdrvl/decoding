@@ -1,0 +1,142 @@
+{
+  "schema_version": "operator.v1",
+  "name": "decoding",
+  "tool_version": "0.5.0",
+  "contract_version": "1.0.0",
+  "description": "Deterministic convergence engine for derived legacy-system archaeology claims",
+  "repository": "https://github.com/cmdrvl/decoding",
+  "license": "MIT",
+  "agent_guide": "https://github.com/cmdrvl/.github/blob/main/profile/AGENT_PROMPT.md",
+  "invocation": {
+    "binary": "decoding",
+    "usage": [
+      "decoding archaeology <CLAIMS>... --policy <FILE> [OPTIONS]",
+      "decoding --describe",
+      "decoding --schema",
+      "decoding capabilities --json",
+      "decoding robot-docs guide",
+      "decoding doctor [health|capabilities|triage|robot-docs] [OPTIONS]",
+      "decoding --robot-triage"
+    ],
+    "output_mode": "jsonl",
+    "output_schema": "canon_entry.v0",
+    "json_flag": "--json"
+  },
+  "arguments": [
+    {"name": "claims", "type": "file_path[]", "position": 0, "variadic": true, "required": true, "description": "Derived claim.v0 JSONL inputs for archaeology"}
+  ],
+  "options": [
+    {"name": "policy", "flag": "--policy", "type": "file_path", "required": true, "description": "Explicit legacy.decode.v0 policy for archaeology"},
+    {"name": "output", "flag": "--out", "aliases": ["--output"], "type": "file_path", "output": true, "default": "stdout", "description": "canon_entry.v0 JSONL destination"},
+    {"name": "escalations", "flag": "--escalations", "type": "file_path", "output": true, "default": null, "description": "escalation.v0 JSONL destination"},
+    {"name": "convergence", "flag": "--convergence", "type": "file_path", "output": true, "default": null, "description": "convergence.v0 JSON summary destination"},
+    {"name": "json", "flag": "--json", "type": "flag", "default": false, "description": "JSON status on stderr; archaeology stdout remains canon_entry.v0 JSONL"},
+    {"name": "describe", "flag": "--describe", "type": "flag", "default": false, "description": "Emit this embedded manifest verbatim without inputs"},
+    {"name": "schema", "flag": "--schema", "type": "flag", "default": false, "description": "Emit JSON Schema for each canonical stdout record without inputs"},
+    {"name": "robot_triage", "flag": "--robot-triage", "type": "flag", "default": false, "description": "Deprecated alias for doctor triage --json"}
+  ],
+  "commands": [
+    {
+      "name": "archaeology",
+      "description": "Converge derived claim.v0 records; directly observed catalog metadata bypasses decoding",
+      "arguments": [
+        {"name": "claims", "type": "file_path[]", "position": 0, "variadic": true, "required": true}
+      ],
+      "options": [
+        {"name": "policy", "flag": "--policy", "type": "file_path", "required": true},
+        {"name": "output", "flag": "--out", "aliases": ["--output"], "type": "file_path", "output": true, "default": "stdout"},
+        {"name": "escalations", "flag": "--escalations", "type": "file_path", "output": true, "default": null},
+        {"name": "convergence", "flag": "--convergence", "type": "file_path", "output": true, "default": null},
+        {"name": "json", "flag": "--json", "type": "flag", "default": false}
+      ],
+      "output_schema": "canon_entry.v0",
+      "status_stream": "stderr",
+      "refusal_code_pointer": "/refusal/code",
+      "refusal_detail_pointer": "/refusal/detail",
+      "operational_error_code_pointer": "/error/code",
+      "exit_codes": {
+        "0": {"meaning": "All buckets resolved; no escalations", "domain": "positive"},
+        "1": {"meaning": "One or more buckets escalated for human review", "domain": "negative"},
+        "2": {"meaning": "Invalid input, policy, usage, or operational failure", "domain": "error"}
+      },
+      "current_runtime_behavior": {
+        "network": "not_used",
+        "reads_stdin": false,
+        "writes_only_explicit_output_paths": true,
+        "output_paths_replace_existing_files": true,
+        "output_paths_must_be_distinct_from_inputs_and_each_other": true,
+        "writes_witness": false
+      }
+    },
+    {
+      "name": "capabilities",
+      "description": "Emit this operator.v1 contract as JSON; doctor capabilities --json is retained as a deprecated alias",
+      "arguments": [],
+      "options": [{"name": "json", "flag": "--json", "type": "flag", "default": false}],
+      "exit_codes": {
+        "0": {"meaning": "Capabilities emitted", "domain": "positive"},
+        "2": {"meaning": "Usage or output error", "domain": "error"}
+      }
+    },
+    {
+      "name": "doctor",
+      "description": "Read-only health diagnostics; doctor capabilities and doctor robot-docs are retained aliases; --robot-triage is a deprecated alias for doctor triage --json",
+      "arguments": [],
+      "options": [{"name": "json", "flag": "--json", "type": "flag", "default": false}, {"name": "robot_triage", "flag": "--robot-triage", "type": "flag", "default": false}],
+      "exit_codes": {
+        "0": {"meaning": "Healthy", "domain": "positive"},
+        "1": {"meaning": "Unhealthy doctor report", "domain": "unhealthy"},
+        "2": {"meaning": "Usage or output error", "domain": "error"}
+      }
+    },
+    {
+      "name": "robot-docs",
+      "description": "Bounded operating guide; doctor robot-docs [guide] is retained as a deprecated alias",
+      "arguments": [],
+      "options": [],
+      "exit_codes": {
+        "0": {"meaning": "Guide emitted", "domain": "positive"},
+        "2": {"meaning": "Usage or output error", "domain": "error"}
+      }
+    }
+  ],
+  "exit_codes": {
+    "0": {"meaning": "All buckets resolved, or discovery completed", "domain": "positive"},
+    "1": {"meaning": "Converged with escalations requiring human review", "domain": "negative"},
+    "2": {"meaning": "Refusal, usage error, or operational error; never an escalation", "domain": "error"}
+  },
+  "refusals": [
+    {"code": "E_CLAIM_INVALID", "message": "Malformed JSONL, unknown fields or vocabulary, invalid claim_id, context, ancestry or value shape", "action": "fix"},
+    {"code": "E_POLICY_INVALID", "message": "Invalid policy JSON, unknown policy keys, invalid numeric bounds or policy values", "action": "fix"},
+    {"code": "E_IO", "message": "Cannot read an input or write an explicit output; operational error rather than domain refusal", "action": "retry"}
+  ],
+  "env_vars": [
+    {"name": "NO_COLOR", "description": "Disables ANSI styling; decoding emits plain text when piped regardless"},
+    {"name": "TERM", "description": "Terminal declaration; TERM=dumb is always ANSI-free"}
+  ],
+  "formats": ["claim.v0 JSONL", "legacy.decode.v0 JSON", "canon_entry.v0 JSONL", "escalation.v0 JSONL", "convergence.v0 JSON"],
+  "side_effects": {
+    "reads_files": true,
+    "writes_files": true,
+    "network": false,
+    "writes_witness": false,
+    "notes": "Archaeology reads explicit claim and policy files and writes only explicit output paths; discovery commands are read-only."
+  },
+  "capabilities": {
+    "formats": ["jsonl", "json policy"],
+    "profile_aware": false,
+    "streaming": false,
+    "agent_surfaces": {
+      "global_json": false,
+      "robot_triage": "doctor --robot-triage",
+      "capabilities": "capabilities --json",
+      "robot_docs": "robot-docs guide",
+      "doctor_fix": false,
+      "describe": "--describe",
+      "schema": "--schema"
+    },
+    "witness": {"ambient_recording": "not_applicable", "query_subcommands": [], "no_witness_flag": null}
+  },
+  "pipeline": {"upstream": ["canon", "fingerprint", "crucible"], "downstream": ["verify", "assess", "pack"]},
+  "providers": []
+}

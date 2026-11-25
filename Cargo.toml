@@ -1,6 +1,6 @@
 [package]
 name = "decoding"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 authors = ["CMD+RVL <engineering@cmdrvl.com>"]
 description = "Deterministic convergence engine for legacy-system archaeology"
@@ -21,6 +21,7 @@ serde_json = { version = "1", features = ["arbitrary_precision"] }
 bigdecimal = "=0.4.11"
 sha2 = "0.10"
 indexmap = { version = "2", features = ["serde"] }
+spine-rules = { git = "https://github.com/cmdrvl/spine-rules", rev = "b2a8149", version = "=0.3.0" }
 
 [dev-dependencies]
 tempfile = "3"

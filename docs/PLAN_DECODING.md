@@ -1,5 +1,23 @@
 # decoding — Phase 1
 
+## Operator contract
+
+`operator.json` is executable operator.v1 documentation, validated with the pinned
+spine-rules contract types. `decoding --describe` emits its embedded bytes unchanged;
+its tool version must equal Cargo.toml. `--schema` emits the embedded JSON Schema for
+each canon_entry.v0 stdout record. These flags require no domain inputs.
+Top-level `capabilities --json` emits the same operator.v1 document as `--describe`.
+`doctor capabilities --json` wraps that document in a `cmdrvl.doctor.v1` capabilities
+report, while `robot-docs guide` is canonical and the old doctor forms remain aliases.
+
+Archaeology stdout remains canonical JSONL. `--json` selects stderr status, with
+`version` and stable `/refusal/code` and `/refusal/detail` fields for invalid claims
+(`E_CLAIM_INVALID`) and invalid policies (`E_POLICY_INVALID`). Operational failures
+use `/error/code` (`E_IO`) and `/error/detail`, exit 2, and never become escalations.
+Usage failures remain clap diagnostics on stderr. No discovery path reads domain
+inputs, invokes resolution, writes outputs, probes the network or records ambient
+witness events. Witness recording is explicitly `not_applicable` in the manifest.
+
 ## Scoped claims and source dependence (bd-ou1)
 
 Native probes reproduced two distinct problems: unrecognized context/ancestry
@@ -624,7 +642,7 @@ Arguments:
 
 Options:
   --policy <FILE>          Archaeology decode policy
-  --output <FILE>          Canon entry JSONL output
+  --out <FILE>             Canon entry JSONL output (`--output` remains an alias)
   --escalations <FILE>     Escalation JSONL output
   --convergence <FILE>     Convergence report JSON output
   --json                   JSON status messages
@@ -641,10 +659,13 @@ Do not ship a broader CLI in Phase 1.
 The only accepted diagnostic exception is read-only doctor mode:
 
 ```text
-decoding doctor health [--json]
-decoding doctor capabilities [--json]
-decoding doctor robot-docs
-decoding doctor --robot-triage
+decoding doctor [--json]
+decoding doctor health [--json]              (legacy alias)
+decoding doctor capabilities [--json]        (legacy alias)
+decoding doctor triage --json
+decoding doctor robot-docs [guide]           (legacy alias)
+decoding robot-docs guide
+decoding --robot-triage                       (legacy alias)
 ```
 
 Doctor mode is not part of the archaeology domain surface. It must return
@@ -656,7 +677,7 @@ writing. It must not parse catalog records, read derived claim files, write
 
 The current code inventory has no decoding-managed home or repo-local config,
 state, cache, receipt, log, or lock path. `canon_entry.v0` defaults to stdout,
-and `--output`, `--escalations`, and `--convergence` write only to explicit
+and `--out` (`--output` remains an alias), `--escalations`, and `--convergence` write only to explicit
 operator-supplied paths.
 
 The canonical CMD+RVL root remains `~/.cmdrvl/` for any future managed path.

@@ -15,6 +15,10 @@ pub mod resolve;
 
 use cli::Outcome;
 
+/// Executable operator documentation, embedded verbatim in the binary.
+pub const OPERATOR_JSON: &str = include_str!("../operator.json");
+pub const OUTPUT_SCHEMA: &str = include_str!("../schemas/output.schema.json");
+
 /// Top-level entry point. Parses CLI args, loads inputs, runs the pipeline.
 pub fn run() -> Result<Outcome, Box<dyn std::error::Error>> {
     let args = cli::parse();

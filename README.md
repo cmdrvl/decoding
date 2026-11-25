@@ -346,8 +346,10 @@ cargo build --release
 
 ```
 decoding archaeology <CLAIMS>... --policy <FILE> [OPTIONS]
-decoding doctor <health|capabilities|robot-docs> [--json]
-decoding doctor --robot-triage
+decoding capabilities --json
+decoding robot-docs guide
+decoding doctor [health|capabilities|triage|robot-docs] [--json]
+decoding --robot-triage
 ```
 
 ### Arguments
@@ -361,7 +363,7 @@ decoding doctor --robot-triage
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--policy <FILE>` | string | *(required)* | Archaeology decode policy JSON |
-| `--output <FILE>` / `--out <FILE>` | string | stdout | Canon entry JSONL output |
+| `--out <FILE>` / `--output <FILE>` | string | stdout | Canon entry JSONL output (`--output` is the legacy alias) |
 | `--escalations <FILE>` | string | *(none)* | Escalation JSONL output |
 | `--convergence <FILE>` | string | *(none)* | Convergence report JSON output |
 | `--json` | flag | `false` | JSON status messages on stderr |
@@ -377,7 +379,7 @@ path is added, its migration ledger and deprecation notices belong at
 
 Current artifact routing is explicit:
 
-- `canon_entry.v0` defaults to stdout unless `--output <FILE>` is supplied.
+- `canon_entry.v0` defaults to stdout unless `--out <FILE>` is supplied (`--output` remains an alias).
 - `escalation.v0` is written only when `--escalations <FILE>` is supplied.
 - `convergence.v0` is written only when `--convergence <FILE>` is supplied.
 - The current inventory has no legacy decoding-managed paths to copy or
@@ -389,10 +391,12 @@ Current artifact routing is explicit:
 
 | Command | Output | Description |
 |---------|--------|-------------|
-| `decoding doctor health [--json]` | human or JSON | Health and read-only safety checks |
-| `decoding doctor capabilities [--json]` | human or JSON | Supported command and contract metadata |
-| `decoding doctor robot-docs` | human text | Deterministic operating notes for agents |
-| `decoding doctor --robot-triage` | JSON | Prioritized next actions and failure-mode hints |
+| `decoding doctor [--json]` / `doctor health [--json]` | human or JSON | `cmdrvl.doctor.v1` health report |
+| `decoding capabilities --json` | JSON | The canonical `operator.v1` contract |
+| `decoding doctor capabilities --json` | JSON | `cmdrvl.doctor.v1` report embedding the operator contract |
+| `decoding robot-docs guide` | human text | Deterministic operating notes for agents |
+| `decoding doctor triage --json` | JSON | `cmdrvl.doctor.v1` prioritized next actions |
+| `decoding --robot-triage` | JSON | Legacy alias for `doctor triage --json` |
 
 `doctor --fix` is intentionally absent. Any mutation-capable doctor mode needs a separate detector, backup, inverse, fixture, and undo design.
 
@@ -650,7 +654,24 @@ Yes. Exit codes (0/1/2) and JSONL output are designed for automation.
 
 ---
 
-## Agent Integration
+## Agent Surface
+
+The embedded [operator.json](./operator.json) is the machine-readable command and safety contract.
+
+| Surface | Command |
+|---------|---------|
+| Operator manifest | `decoding --describe` |
+| Canonical stdout schema | `decoding --schema` |
+| Capabilities | `decoding capabilities --json` |
+| Operating guide | `decoding robot-docs guide` |
+| Read-only triage | `decoding doctor triage --json` (`decoding --robot-triage` is a legacy alias) |
+
+Discovery commands need no claim or policy files and write no artifacts. `--describe`
+emits the embedded manifest byte for byte. Archaeology always emits canonical JSONL
+on stdout; `--json` selects JSON **status on stderr**, including stable
+`/refusal/code` and `/refusal/detail` fields. `E_CLAIM_INVALID` and
+`E_POLICY_INVALID` require corrected inputs; `E_IO` identifies an operational error.
+Decoding has no ambient witness recording and no `--no-witness` switch.
 
 For the full toolchain guide, see the [Agent Operator Guide](https://github.com/cmdrvl/.github/blob/main/profile/AGENT_PROMPT.md).
 
