@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{fs, path::Path};
 
 use assert_cmd::Command;
 use predicates::str::contains;
@@ -86,6 +86,47 @@ fn doctor_capabilities_json_describes_contracts() -> Result<(), Box<dyn std::err
         report["core_command"]["output_contracts"][2],
         "convergence.v0"
     );
+    Ok(())
+}
+
+#[test]
+fn output_path_accepts_output_and_out_aliases() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let output = dir.path().join("canon-output.jsonl");
+    let alias = dir.path().join("canon-out.jsonl");
+    let claims = "tests/fixtures/claims/mixed_source.jsonl";
+    let policy = "tests/fixtures/policies/legacy.decode.v0.json";
+
+    let mut long_command = decoding()?;
+    let long = long_command
+        .args([
+            "archaeology",
+            claims,
+            "--policy",
+            policy,
+            "--output",
+            output.to_str().unwrap(),
+            "--json",
+        ])
+        .output()?;
+    let mut short_command = decoding()?;
+    let short = short_command
+        .args([
+            "archaeology",
+            claims,
+            "--policy",
+            policy,
+            "--out",
+            alias.to_str().unwrap(),
+            "--json",
+        ])
+        .output()?;
+
+    assert_eq!(long.status.code(), Some(1));
+    assert_eq!(short.status.code(), Some(1));
+    assert_eq!(long.stdout, short.stdout);
+    assert_eq!(long.stderr, short.stderr);
+    assert_eq!(fs::read(output)?, fs::read(alias)?);
     Ok(())
 }
 

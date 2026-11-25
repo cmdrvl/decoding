@@ -39,7 +39,7 @@ pub struct ArchaeologyArgs {
     pub policy: PathBuf,
 
     /// Canon entry JSONL output (default: stdout).
-    #[arg(long)]
+    #[arg(long, visible_alias = "out")]
     pub output: Option<PathBuf>,
 
     /// Escalation JSONL output.

@@ -125,7 +125,7 @@ when several parsers produce different artifact IDs. Overlapping origin sets cou
 as one dependence group; unknown ancestry earns no independent corroboration.
 Different contexts never share a bucket, and outputs preserve their exact context.
 Producers must supply every domain-required dimension and evidence for the declared
-origins. See the [scoped claim contract](docs/PLAN_DECODING.md#scoped-claims-and-source-dependence-bd-ou1).
+origins. See the [scoped claim contract](docs/PLAN_DECODING.md).
 
 Check `doctor capabilities --json` → `core_command.claim_features` before submitting
 scoped claims: older binaries can silently ignore these fields. Exact decimal
@@ -361,7 +361,7 @@ decoding doctor --robot-triage
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--policy <FILE>` | string | *(required)* | Archaeology decode policy JSON |
-| `--output <FILE>` | string | stdout | Canon entry JSONL output |
+| `--output <FILE>` / `--out <FILE>` | string | stdout | Canon entry JSONL output |
 | `--escalations <FILE>` | string | *(none)* | Escalation JSONL output |
 | `--convergence <FILE>` | string | *(none)* | Convergence report JSON output |
 | `--json` | flag | `false` | JSON status messages on stderr |
