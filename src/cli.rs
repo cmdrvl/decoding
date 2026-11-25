@@ -1,5 +1,5 @@
 use clap::{Args, Parser, Subcommand};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -409,7 +409,11 @@ fn write_convergence_report(
 
 fn create_writer(path: Option<&PathBuf>) -> Result<Box<dyn Write>, CliFailure> {
     match path {
-        Some(path) => File::create(path)
+        Some(path) => OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)
             .map(|file| Box::new(file) as Box<dyn Write>)
             .map_err(|error| {
                 CliFailure::error(format!(

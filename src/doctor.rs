@@ -1,12 +1,14 @@
 //! Read-only diagnostics for headless agents and operators.
 
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 
 use serde_json::Value;
 use spine_rules::contract::OperatorContract;
 use spine_rules::doctor::{DoctorMode, DoctorReport, Finding, Severity};
 
 use crate::cli::{DoctorArgs, DoctorCommand, Outcome};
+
+const FORCE_UNHEALTHY_ENV: &str = "DECODING_DOCTOR_FORCE_UNHEALTHY";
 
 pub fn execute(args: &DoctorArgs) -> Result<Outcome, Box<dyn std::error::Error>> {
     if args.robot_triage {
@@ -18,7 +20,7 @@ pub fn execute(args: &DoctorArgs) -> Result<Outcome, Box<dyn std::error::Error>>
             if output.json {
                 return write_report(health_report());
             } else {
-                write_human_health()?;
+                return write_human_health();
             }
         }
         Some(DoctorCommand::Capabilities(output)) => {
@@ -39,7 +41,7 @@ pub fn execute(args: &DoctorArgs) -> Result<Outcome, Box<dyn std::error::Error>>
             if args.json {
                 return write_report(health_report());
             }
-            write_human_health()?;
+            return write_human_health();
         }
     }
 
@@ -58,10 +60,16 @@ fn write_report(report: DoctorReport) -> Result<Outcome, Box<dyn std::error::Err
     })
 }
 
-fn write_human_health() -> Result<(), Box<dyn std::error::Error>> {
+fn write_human_health() -> Result<Outcome, Box<dyn std::error::Error>> {
+    let report = health_report();
     let mut stdout = io::stdout().lock();
     writeln!(stdout, "decoding doctor health")?;
-    writeln!(stdout, "status: healthy")?;
+    let status = if report.healthy {
+        color_status("healthy", true)
+    } else {
+        color_status("unhealthy", false)
+    };
+    writeln!(stdout, "status: {status}")?;
     writeln!(stdout, "contract: cmdrvl.doctor.v1")?;
     writeln!(stdout, "version: {}", env!("CARGO_PKG_VERSION"))?;
     writeln!(stdout, "read_only: true")?;
@@ -70,7 +78,32 @@ fn write_human_health() -> Result<(), Box<dyn std::error::Error>> {
     writeln!(stdout, "claim_loaders_entered: false")?;
     writeln!(stdout, "policy_loaders_entered: false")?;
     writeln!(stdout, "output_writers_entered: false")?;
-    Ok(())
+    Ok(if report.healthy {
+        Outcome::Clean
+    } else {
+        Outcome::Escalations
+    })
+}
+
+fn color_status(status: &str, healthy: bool) -> String {
+    if !color_enabled() {
+        return status.to_owned();
+    }
+    let color = if healthy { "32" } else { "31" };
+    format!("\x1b[{color}m{status}\x1b[0m")
+}
+
+fn color_enabled() -> bool {
+    if std::env::var_os("NO_COLOR").is_some()
+        || std::env::var("TERM").is_ok_and(|term| term.eq_ignore_ascii_case("dumb"))
+    {
+        return false;
+    }
+
+    let force = std::env::var("CLICOLOR_FORCE")
+        .map(|value| !value.is_empty() && value != "0")
+        .unwrap_or(false);
+    force || io::stdout().is_terminal()
 }
 
 fn write_human_capabilities() -> Result<(), Box<dyn std::error::Error>> {
@@ -185,27 +218,38 @@ fn write_robot_docs() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn health_report() -> DoctorReport {
+    let forced_unhealthy = std::env::var_os(FORCE_UNHEALTHY_ENV).is_some();
+    let mut findings = vec![
+        finding("cli_loaded", "decoding CLI metadata is available"),
+        finding(
+            "doctor_read_only",
+            "doctor dispatch returns before archaeology claim, policy, and output loaders",
+        ),
+        finding(
+            "fix_mode_disabled",
+            "doctor --fix is not part of the clap surface",
+        ),
+        finding(
+            "boundary_preserved",
+            "doctor does not parse catalog records or derived claim files",
+        ),
+    ];
+    if forced_unhealthy {
+        findings.push(Finding {
+            id: "forced_unhealthy".to_owned(),
+            severity: Severity::Error,
+            message: format!("{FORCE_UNHEALTHY_ENV} requested an unhealthy doctor fixture"),
+            fix: Some(format!("unset {FORCE_UNHEALTHY_ENV}")),
+        });
+    }
+
     DoctorReport {
         schema_version: spine_rules::doctor::DOCTOR_SCHEMA_VERSION.to_owned(),
         mode: DoctorMode::Health,
         tool: "decoding".to_owned(),
         tool_version: env!("CARGO_PKG_VERSION").to_owned(),
-        healthy: true,
-        findings: vec![
-            finding("cli_loaded", "decoding CLI metadata is available"),
-            finding(
-                "doctor_read_only",
-                "doctor dispatch returns before archaeology claim, policy, and output loaders",
-            ),
-            finding(
-                "fix_mode_disabled",
-                "doctor --fix is not part of the clap surface",
-            ),
-            finding(
-                "boundary_preserved",
-                "doctor does not parse catalog records or derived claim files",
-            ),
-        ],
+        healthy: !forced_unhealthy,
+        findings,
         contract: None,
         next_actions: None,
     }

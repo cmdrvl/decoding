@@ -112,7 +112,8 @@
   ],
   "env_vars": [
     {"name": "NO_COLOR", "description": "Disables ANSI styling; decoding emits plain text when piped regardless"},
-    {"name": "TERM", "description": "Terminal declaration; TERM=dumb is always ANSI-free"}
+    {"name": "TERM", "description": "Terminal declaration; TERM=dumb is always ANSI-free"},
+    {"name": "DECODING_DOCTOR_FORCE_UNHEALTHY", "description": "Test-only health fixture that makes doctor report an error finding"}
   ],
   "formats": ["claim.v0 JSONL", "legacy.decode.v0 JSON", "canon_entry.v0 JSONL", "escalation.v0 JSONL", "convergence.v0 JSON"],
   "side_effects": {

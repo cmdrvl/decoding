@@ -103,6 +103,69 @@ fn doctor_robot_triage_json_lists_agent_actions() -> Result<(), Box<dyn std::err
 }
 
 #[test]
+fn unhealthy_doctor_state_returns_exit_one() -> Result<(), Box<dyn std::error::Error>> {
+    let output = decoding()?
+        .args(["doctor", "--json"])
+        .env("DECODING_DOCTOR_FORCE_UNHEALTHY", "1")
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["healthy"], false);
+    assert_eq!(report["findings"][4]["severity"], "error");
+    Ok(())
+}
+
+#[test]
+fn no_color_and_non_tty_guard_forced_ansi() -> Result<(), Box<dyn std::error::Error>> {
+    let forced = decoding()?
+        .args(["doctor"])
+        .env("CLICOLOR_FORCE", "1")
+        .env_remove("NO_COLOR")
+        .env_remove("TERM")
+        .output()?;
+    assert!(String::from_utf8_lossy(&forced.stdout).contains("\x1b["));
+
+    let no_color = decoding()?
+        .args(["doctor"])
+        .env("CLICOLOR_FORCE", "1")
+        .env("NO_COLOR", "1")
+        .env_remove("TERM")
+        .output()?;
+    assert!(!String::from_utf8_lossy(&no_color.stdout).contains("\x1b["));
+
+    let dumb = decoding()?
+        .args(["doctor"])
+        .env("CLICOLOR_FORCE", "1")
+        .env_remove("NO_COLOR")
+        .env("TERM", "dumb")
+        .output()?;
+    assert!(!String::from_utf8_lossy(&dumb.stdout).contains("\x1b["));
+
+    let non_tty = decoding()?
+        .args(["doctor"])
+        .env_remove("CLICOLOR_FORCE")
+        .env_remove("NO_COLOR")
+        .env_remove("TERM")
+        .output()?;
+    assert!(!String::from_utf8_lossy(&non_tty.stdout).contains("\x1b["));
+    Ok(())
+}
+
+#[test]
+fn edit_distance_one_typo_has_a_clap_hint() -> Result<(), Box<dyn std::error::Error>> {
+    decoding()?
+        .args(["archaeolog"])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(contains("similar subcommand"))
+        .stderr(contains("archaeology"));
+    Ok(())
+}
+
+#[test]
 fn doctor_robot_docs_are_human_readable() -> Result<(), Box<dyn std::error::Error>> {
     decoding()?
         .args(["doctor", "robot-docs"])
