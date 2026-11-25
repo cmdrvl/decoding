@@ -165,6 +165,10 @@ fn write_robot_docs() -> Result<(), Box<dyn std::error::Error>> {
         stdout,
         "  decoding archaeology <CLAIMS>... --policy <FILE> [--out <FILE>] [--escalations <FILE>] [--convergence <FILE>] [--json]"
     )?;
+    writeln!(
+        stdout,
+        "  add --explicit to archaeology for raw escalation candidate values; default output uses opaque hashes"
+    )?;
     writeln!(stdout)?;
     writeln!(stdout, "Routing and exits")?;
     writeln!(

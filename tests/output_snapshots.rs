@@ -35,7 +35,7 @@ fn mixed_source_outputs() -> (String, String, serde_json::Value) {
                 write_canon_entry(&mut canon_entries, &resolved.entry).unwrap();
             }
             Decision::Escalated(escalated) => {
-                write_escalation(&mut escalations, &escalated.escalation).unwrap();
+                write_escalation(&mut escalations, &escalated.escalation, true).unwrap();
             }
         }
     }

@@ -92,6 +92,66 @@ fn output_path_accepts_output_and_out_aliases() -> Result<(), Box<dyn std::error
 }
 
 #[test]
+fn redacts_claim_values_by_default_and_explicit_reveals_them()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let claims_path = dir.path().join("canary-claims.jsonl");
+    let redacted_path = dir.path().join("redacted-escalations.jsonl");
+    let redacted_report_path = dir.path().join("redacted-convergence.json");
+    let explicit_path = dir.path().join("explicit-escalations.jsonl");
+    let claims = fs::read_to_string("tests/fixtures/claims/mixed_source.jsonl")?
+        .replace("Adjusted EBITDA rule family", "CANARY-SENSITIVE-VALUE")
+        .replace("EBITDA exception class", "OTHER-SENSITIVE-VALUE");
+    fs::write(&claims_path, claims)?;
+
+    let claims_arg = claims_path.to_str().unwrap();
+    let redacted_arg = redacted_path.to_str().unwrap();
+    let redacted_report_arg = redacted_report_path.to_str().unwrap();
+    let policy = "tests/fixtures/policies/legacy.decode.v0.json";
+
+    let mut redacted = decoding()?;
+    let redacted_output = redacted
+        .args([
+            "archaeology",
+            claims_arg,
+            "--policy",
+            policy,
+            "--escalations",
+            redacted_arg,
+            "--convergence",
+            redacted_report_arg,
+        ])
+        .output()?;
+    assert_eq!(redacted_output.status.code(), Some(1));
+    let redacted_escalations = fs::read_to_string(&redacted_path)?;
+    let redacted_report = fs::read_to_string(&redacted_report_path)?;
+    assert!(!redacted_escalations.contains("CANARY-SENSITIVE-VALUE"));
+    assert!(!redacted_escalations.contains("OTHER-SENSITIVE-VALUE"));
+    assert!(!redacted_report.contains("CANARY-SENSITIVE-VALUE"));
+    assert!(redacted_escalations.contains("\"redacted\":true"));
+    assert!(redacted_escalations.contains("\"sha256\":\"sha256:"));
+
+    let explicit_arg = explicit_path.to_str().unwrap();
+    let mut explicit = decoding()?;
+    let explicit_output = explicit
+        .args([
+            "archaeology",
+            claims_arg,
+            "--policy",
+            policy,
+            "--escalations",
+            explicit_arg,
+            "--explicit",
+        ])
+        .output()?;
+    assert_eq!(explicit_output.status.code(), Some(1));
+    let explicit_escalations = fs::read_to_string(explicit_path)?;
+    assert!(explicit_escalations.contains("CANARY-SENSITIVE-VALUE"));
+    assert!(explicit_escalations.contains("OTHER-SENSITIVE-VALUE"));
+    Ok(())
+}
+
+#[test]
 fn doctor_robot_triage_json_lists_agent_actions() -> Result<(), Box<dyn std::error::Error>> {
     let report = stdout_json(&["doctor", "--robot-triage"])?;
 

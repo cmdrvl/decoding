@@ -69,6 +69,10 @@ pub struct ArchaeologyArgs {
     /// Emit JSON status messages on stderr.
     #[arg(long)]
     pub json: bool,
+
+    /// Emit raw candidate claim values in escalation output.
+    #[arg(long)]
+    pub explicit: bool,
 }
 
 #[derive(Args, Debug)]
@@ -280,7 +284,7 @@ fn execute_archaeology(args: &ArchaeologyArgs) -> Result<ExecutionSummary, CliFa
         .count();
 
     write_canon_entries(args.output.as_ref(), &decisions)?;
-    write_escalations(args.escalations.as_ref(), &decisions)?;
+    write_escalations(args.escalations.as_ref(), &decisions, args.explicit)?;
     write_convergence_report(args.convergence.as_ref(), &policy.policy_id, &decisions)?;
 
     Ok(ExecutionSummary {
@@ -360,6 +364,7 @@ fn write_canon_entries(
 fn write_escalations(
     output_path: Option<&PathBuf>,
     decisions: &[Decision],
+    explicit: bool,
 ) -> Result<(), CliFailure> {
     let Some(path) = output_path else {
         return Ok(());
@@ -368,7 +373,7 @@ fn write_escalations(
 
     for decision in decisions {
         if let Decision::Escalated(escalated) = decision {
-            write_escalation(&mut writer, &escalated.escalation).map_err(|error| {
+            write_escalation(&mut writer, &escalated.escalation, explicit).map_err(|error| {
                 CliFailure::error(format!("failed to write escalations: {error}"))
             })?;
         }
@@ -526,6 +531,7 @@ mod tests {
                 escalations: Some(escalations.clone()),
                 convergence: Some(convergence.clone()),
                 json: false,
+                explicit: false,
             })),
             ..Cli::default()
         })
@@ -554,6 +560,7 @@ mod tests {
                 escalations: None,
                 convergence: None,
                 json: true,
+                explicit: false,
             })),
             ..Cli::default()
         })
@@ -575,6 +582,7 @@ mod tests {
                 escalations: None,
                 convergence: None,
                 json: true,
+                explicit: false,
             })),
             ..Cli::default()
         })

@@ -4,7 +4,8 @@ use std::io::Write;
 
 use crate::contracts::canon_entry::CanonEntry;
 use crate::contracts::escalation::{CandidateValue, Escalation};
-use crate::normalize::canonical_json;
+use crate::contracts::escalation::{ScalarCandidateKind, ScalarCandidateValue};
+use crate::normalize::{canonical_json, sha256_hex};
 
 /// Write a canon entry as a single JSONL line.
 pub fn write_canon_entry(
@@ -24,14 +25,34 @@ pub fn write_canon_entry(
 pub fn write_escalation(
     writer: &mut dyn Write,
     escalation: &Escalation,
+    explicit: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut escalation = escalation.clone();
     escalation.claim_ids.sort_unstable();
+    if !explicit {
+        escalation.candidate_values = escalation
+            .candidate_values
+            .iter()
+            .map(redact_candidate)
+            .collect();
+    }
     escalation.candidate_values.sort_by_key(candidate_sort_key);
 
     serde_json::to_writer(&mut *writer, &escalation)?;
     writer.write_all(b"\n")?;
     Ok(())
+}
+
+fn redact_candidate(candidate: &CandidateValue) -> CandidateValue {
+    let value = serde_json::to_value(candidate).unwrap_or(serde_json::Value::Null);
+    let value_hash = sha256_hex(canonical_json(&value).as_bytes());
+    CandidateValue::Scalar(ScalarCandidateValue {
+        kind: ScalarCandidateKind::Scalar,
+        value: serde_json::json!({
+            "redacted": true,
+            "sha256": value_hash,
+        }),
+    })
 }
 
 fn candidate_sort_key(candidate: &CandidateValue) -> String {
@@ -159,7 +180,7 @@ mod tests {
         };
 
         let mut output = Vec::new();
-        write_escalation(&mut output, &escalation).unwrap();
+        write_escalation(&mut output, &escalation, true).unwrap();
 
         let rendered = String::from_utf8(output).unwrap();
         let expected = serde_json::to_string(&Escalation {
@@ -185,5 +206,36 @@ mod tests {
             + "\n";
 
         assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn redacts_candidate_values_without_explicit_mode() {
+        let escalation = Escalation {
+            context: None,
+            event: "escalation.v0".to_string(),
+            bucket_id: "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+                .to_string(),
+            subject: SubjectRef {
+                kind: SubjectKind::Mapping,
+                id: "adj.ebitda.rule.family".to_string(),
+            },
+            property_type: PropertyType::SemanticLabel,
+            reason: EscalationReason::Conflicted,
+            claim_ids: Vec::new(),
+            candidate_values: vec![CandidateValue::Scalar(ScalarCandidateValue {
+                kind: ScalarCandidateKind::Scalar,
+                value: json!("CANARY-SENSITIVE-VALUE"),
+            })],
+            recommended_action: RecommendedAction::Review,
+            summary: "one incompatible candidate value remains".to_string(),
+        };
+
+        let mut output = Vec::new();
+        write_escalation(&mut output, &escalation, false).unwrap();
+        let rendered = String::from_utf8(output).unwrap();
+
+        assert!(!rendered.contains("CANARY-SENSITIVE-VALUE"));
+        assert!(rendered.contains("\"redacted\":true"));
+        assert!(rendered.contains("\"sha256\":\"sha256:"));
     }
 }
