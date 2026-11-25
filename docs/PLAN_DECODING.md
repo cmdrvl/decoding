@@ -42,6 +42,11 @@ ID continues to identify the representation, not its independent origin. Conflic
 remain conflicts regardless of dependence or repeated agreeing representations.
 These declarations are producer evidence, not decoder authentication of the source.
 
+For liveness buckets with multiple candidate values, source-priority folding is only
+allowed after at least two independent source components are present. Dependent
+representations of one origin therefore cannot use priority to hide missing
+corroboration.
+
 Unscoped legacy claims retain artifact-ID counting. Scoped outputs use `source_count`
 for the number of known independent origin components. Duplicate IDs and reordered
 inputs retain the existing deterministic replay contract. Context and ancestry

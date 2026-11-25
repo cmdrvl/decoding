@@ -113,6 +113,8 @@ struct RawClaimValue {
     value: serde_json::Value,
 }
 
+const MIN_LIVENESS_CORROBORATION: usize = 2;
+
 fn resolve_liveness(bucket: &Bucket, policy: &Policy, groups: &[CandidateGroup]) -> Decision {
     if groups.is_empty() {
         return Decision::Escalated(EscalatedDecision {
@@ -129,7 +131,9 @@ fn resolve_liveness(bucket: &Bucket, policy: &Policy, groups: &[CandidateGroup])
 
     if groups.len() == 1 {
         let chosen = &groups[0];
-        if is_dead_value(&chosen.canonical_value) && bucket.source_artifact_count() < 2 {
+        if is_dead_value(&chosen.canonical_value)
+            && bucket.source_artifact_count() < MIN_LIVENESS_CORROBORATION
+        {
             return Decision::Escalated(EscalatedDecision {
                 escalation: build_escalation(
                     bucket,
@@ -137,7 +141,7 @@ fn resolve_liveness(bucket: &Bucket, policy: &Policy, groups: &[CandidateGroup])
                     build_candidate_values(PropertyType::Liveness, groups),
                     RecommendedAction::ScanMore,
                     format!(
-                        "need at least 2 corroborating sources, found {}",
+                        "need at least {MIN_LIVENESS_CORROBORATION} corroborating sources, found {}",
                         bucket.source_artifact_count()
                     ),
                 ),
@@ -188,6 +192,22 @@ fn resolve_liveness(bucket: &Bucket, policy: &Policy, groups: &[CandidateGroup])
             source_kinds: source_kinds(bucket),
         });
     };
+
+    let source_count = bucket.source_artifact_count();
+    if source_count < MIN_LIVENESS_CORROBORATION {
+        return Decision::Escalated(EscalatedDecision {
+            escalation: build_escalation(
+                bucket,
+                EscalationReason::MissingCorroboration,
+                build_candidate_values(PropertyType::Liveness, groups),
+                RecommendedAction::ScanMore,
+                format!(
+                    "need at least {MIN_LIVENESS_CORROBORATION} corroborating sources, found {source_count}"
+                ),
+            ),
+            source_kinds: source_kinds(bucket),
+        });
+    }
 
     let chosen = select_group_by_source_priority(groups, source_priority);
     let resolution_kind = if source_priority_break_applied(groups, chosen, source_priority) {

@@ -19,6 +19,14 @@ fn claim(id: usize, origins: &[&str]) -> Value {
     })
 }
 
+fn liveness_claim(id: usize, source_kind: &str, origin: &str, value: &str) -> Value {
+    let mut claim = claim(id, &[origin]);
+    claim["source"]["kind"] = json!(source_kind);
+    claim["property_type"] = json!("liveness");
+    claim["value"] = json!({"kind":"scalar","value":value});
+    claim
+}
+
 fn run(claims: &[Value]) -> (i32, String, String, String) {
     let dir = tempfile::tempdir().unwrap();
     fs::write(
@@ -32,6 +40,48 @@ fn run(claims: &[Value]) -> (i32, String, String, String) {
             "policy_id":"legacy.decode.v0","auto_resolve":[],
             "min_corroboration":{"numeric_scalar":2},"source_priority":{},
             "numeric_tolerance":{"numeric_scalar":{"absolute":0}}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_decoding"))
+        .current_dir(dir.path())
+        .args([
+            "archaeology",
+            "claims.jsonl",
+            "--policy",
+            "policy.json",
+            "--output",
+            "canon.jsonl",
+            "--escalations",
+            "escalations.jsonl",
+            "--convergence",
+            "convergence.json",
+        ])
+        .output()
+        .unwrap();
+    (
+        output.status.code().unwrap(),
+        fs::read_to_string(dir.path().join("canon.jsonl")).unwrap_or_default(),
+        fs::read_to_string(dir.path().join("escalations.jsonl")).unwrap_or_default(),
+        String::from_utf8(output.stderr).unwrap(),
+    )
+}
+
+fn run_liveness(claims: &[Value]) -> (i32, String, String, String) {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("claims.jsonl"),
+        claims.iter().map(|v| format!("{v}\n")).collect::<String>(),
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("policy.json"),
+        json!({
+            "policy_id":"legacy.decode.v0","auto_resolve":[],
+            "min_corroboration":{},
+            "source_priority":{"liveness":["db_scan","repo_scan"]},
+            "numeric_tolerance":{}
         })
         .to_string(),
     )
@@ -110,6 +160,25 @@ fn unknown_ancestry_earns_no_independent_credit() {
     assert_eq!(code, 1);
     assert!(canonical.is_empty());
     assert!(escalations.contains("missing_corroboration"));
+}
+
+#[test]
+fn dependent_liveness_values_cannot_be_resolved_by_source_priority() {
+    let (code, canonical, escalations, _) = run_liveness(&[
+        liveness_claim(1, "db_scan", "same-origin", "stale"),
+        liveness_claim(2, "repo_scan", "same-origin", "alive"),
+    ]);
+
+    // The old implementation selected db_scan's value before checking that the
+    // two representations had independent origins. This must remain an escalation.
+    assert_eq!(code, 1);
+    assert!(canonical.is_empty());
+    let escalation: Value = serde_json::from_str(&escalations).unwrap();
+    assert_eq!(escalation["reason"], "missing_corroboration");
+    assert_eq!(
+        escalation["summary"],
+        "need at least 2 corroborating sources, found 1"
+    );
 }
 
 #[test]
