@@ -61,12 +61,74 @@ jobs:
             exit 1
           fi
 
+      - name: Run explicit archaeology CLI over representative fixture corpus
+        shell: bash
+        run: |
+          set +e
+          cargo run --locked -- archaeology \
+            tests/fixtures/claims/mixed_source.jsonl \
+            --policy tests/fixtures/policies/legacy.decode.v0.json \
+            --output artifacts/explicit-canon.jsonl \
+            --escalations artifacts/explicit-escalations.jsonl \
+            --convergence artifacts/explicit-convergence.json \
+            --explicit \
+            2> artifacts/explicit-stderr.txt
+          explicit_exit_code=$?
+          set -e
+
+          echo "EXPLICIT_CLI_EXIT_CODE=${explicit_exit_code}" >> "$GITHUB_ENV"
+
+          if [[ "${explicit_exit_code}" -ne 1 ]]; then
+            echo "expected explicit archaeology CLI exit code 1, got ${explicit_exit_code}" >&2
+            cat artifacts/explicit-stderr.txt >&2
+            exit 1
+          fi
+
+      - name: Verify default redaction canary
+        shell: bash
+        run: |
+          sed \
+            -e 's/Adjusted EBITDA rule family/SMOKE-REDACTION-CANARY/g' \
+            -e 's/EBITDA exception class/SMOKE-REDACTION-CANARY-OTHER/g' \
+            tests/fixtures/claims/mixed_source.jsonl > artifacts/canary-claims.jsonl
+
+          set +e
+          cargo run --locked -- archaeology \
+            artifacts/canary-claims.jsonl \
+            --policy tests/fixtures/policies/legacy.decode.v0.json \
+            --output artifacts/canary-canon.jsonl \
+            --escalations artifacts/canary-escalations.jsonl \
+            --convergence artifacts/canary-convergence.json \
+            2> artifacts/canary-stderr.txt
+          canary_exit_code=$?
+          set -e
+
+          if [[ "${canary_exit_code}" -ne 1 ]]; then
+            echo "expected redaction canary archaeology exit code 1, got ${canary_exit_code}" >&2
+            cat artifacts/canary-stderr.txt >&2
+            exit 1
+          fi
+          if grep -Fq 'SMOKE-REDACTION-CANARY' artifacts/canary-escalations.jsonl; then
+            echo "default escalation output leaked the planted raw candidate canary" >&2
+            exit 1
+          fi
+          if grep -Fq '"sha256":"sha256:' artifacts/canary-escalations.jsonl; then
+            echo "default escalation output contains the retired value-derived hash marker" >&2
+            exit 1
+          fi
+          grep -Fq '"redacted":true' artifacts/canary-escalations.jsonl
+          grep -Fq '"ref":"v1"' artifacts/canary-escalations.jsonl
+          grep -Fq '"scope":"ordinal"' artifacts/canary-escalations.jsonl
+
       - name: Verify locked output surfaces
         shell: bash
         run: |
           diff -u tests/fixtures/expected/archaeology/mixed_source.canon.jsonl artifacts/canon.jsonl
           diff -u tests/fixtures/expected/archaeology/mixed_source.escalations.jsonl artifacts/escalations.jsonl
           diff -u tests/fixtures/expected/archaeology/mixed_source.convergence.json artifacts/convergence.json
+          diff -u tests/fixtures/expected/archaeology/mixed_source.canon.jsonl artifacts/explicit-canon.jsonl
+          diff -u tests/fixtures/expected/archaeology/mixed_source.escalations.explicit.jsonl artifacts/explicit-escalations.jsonl
+          diff -u tests/fixtures/expected/archaeology/mixed_source.convergence.json artifacts/explicit-convergence.json
 
       - name: Write metrics artifact
         if: always()
