@@ -90,6 +90,7 @@ jobs:
           sed \
             -e 's/Adjusted EBITDA rule family/SMOKE-REDACTION-CANARY/g' \
             -e 's/EBITDA exception class/SMOKE-REDACTION-CANARY-OTHER/g' \
+            -e 's/exec.close_pack_board/SMOKE-REDACTION-REF-ID/g' \
             tests/fixtures/claims/mixed_source.jsonl > artifacts/canary-claims.jsonl
 
           set +e
@@ -112,6 +113,10 @@ jobs:
             echo "default escalation output leaked the planted raw candidate canary" >&2
             exit 1
           fi
+          if grep -Fq 'SMOKE-REDACTION-REF-ID' artifacts/canary-escalations.jsonl; then
+            echo "default escalation output leaked the planted raw reference canary" >&2
+            exit 1
+          fi
           if grep -Fq '"sha256":"sha256:' artifacts/canary-escalations.jsonl; then
             echo "default escalation output contains the retired value-derived hash marker" >&2
             exit 1
@@ -119,6 +124,8 @@ jobs:
           grep -Fq '"redacted":true' artifacts/canary-escalations.jsonl
           grep -Fq '"ref":"v1"' artifacts/canary-escalations.jsonl
           grep -Fq '"scope":"ordinal"' artifacts/canary-escalations.jsonl
+          grep -Fq '"kind":"consumer"' artifacts/canary-escalations.jsonl
+          grep -Fq '"id":{"redacted":true' artifacts/canary-escalations.jsonl
 
       - name: Verify locked output surfaces
         shell: bash

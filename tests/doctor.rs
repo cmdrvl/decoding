@@ -102,7 +102,8 @@ fn redacts_claim_values_by_default_and_explicit_reveals_them()
     let explicit_path = dir.path().join("explicit-escalations.jsonl");
     let claims = fs::read_to_string("tests/fixtures/claims/mixed_source.jsonl")?
         .replace("Adjusted EBITDA rule family", "CANARY-SENSITIVE-VALUE")
-        .replace("EBITDA exception class", "OTHER-SENSITIVE-VALUE");
+        .replace("EBITDA exception class", "OTHER-SENSITIVE-VALUE")
+        .replace("exec.close_pack_board", "CANARY-SENSITIVE-REF-ID");
     fs::write(&claims_path, claims)?;
 
     let claims_arg = claims_path.to_str().unwrap();
@@ -130,12 +131,18 @@ fn redacts_claim_values_by_default_and_explicit_reveals_them()
     let redacted_stderr = String::from_utf8_lossy(&redacted_output.stderr);
     assert!(!redacted_escalations.contains("CANARY-SENSITIVE-VALUE"));
     assert!(!redacted_escalations.contains("OTHER-SENSITIVE-VALUE"));
+    assert!(!redacted_escalations.contains("CANARY-SENSITIVE-REF-ID"));
+    assert!(redacted_escalations.contains("\"kind\":\"consumer\""));
+    assert!(redacted_escalations.contains("\"id\":{\"redacted\":true"));
     assert!(!redacted_report.contains("CANARY-SENSITIVE-VALUE"));
     assert!(!redacted_report.contains("OTHER-SENSITIVE-VALUE"));
+    assert!(!redacted_report.contains("CANARY-SENSITIVE-REF-ID"));
     assert!(!redacted_stdout.contains("CANARY-SENSITIVE-VALUE"));
     assert!(!redacted_stdout.contains("OTHER-SENSITIVE-VALUE"));
+    assert!(!redacted_stdout.contains("CANARY-SENSITIVE-REF-ID"));
     assert!(!redacted_stderr.contains("CANARY-SENSITIVE-VALUE"));
     assert!(!redacted_stderr.contains("OTHER-SENSITIVE-VALUE"));
+    assert!(!redacted_stderr.contains("CANARY-SENSITIVE-REF-ID"));
     assert!(redacted_escalations.contains("\"redacted\":true"));
     assert!(redacted_escalations.contains("\"scope\":\"ordinal\""));
     assert!(redacted_escalations.contains("\"ref\":\"v1\""));
@@ -193,6 +200,9 @@ fn redacts_claim_values_by_default_and_explicit_reveals_them()
     let explicit_escalations = fs::read_to_string(explicit_path)?;
     assert!(explicit_escalations.contains("CANARY-SENSITIVE-VALUE"));
     assert!(explicit_escalations.contains("OTHER-SENSITIVE-VALUE"));
+    assert!(
+        explicit_escalations.contains("\"kind\":\"consumer\",\"id\":\"CANARY-SENSITIVE-REF-ID\"")
+    );
     Ok(())
 }
 
@@ -205,7 +215,8 @@ fn keyed_redaction_is_stable_and_keeps_key_out_of_every_channel()
         &claims_path,
         fs::read_to_string("tests/fixtures/claims/mixed_source.jsonl")?
             .replace("Adjusted EBITDA rule family", "CANARY-SENSITIVE-VALUE")
-            .replace("EBITDA exception class", "OTHER-SENSITIVE-VALUE"),
+            .replace("EBITDA exception class", "OTHER-SENSITIVE-VALUE")
+            .replace("exec.close_pack_board", "CANARY-SENSITIVE-REF-ID"),
     )?;
     let claims = claims_path.to_str().unwrap();
     let policy = "tests/fixtures/policies/legacy.decode.v0.json";
@@ -243,6 +254,17 @@ fn keyed_redaction_is_stable_and_keeps_key_out_of_every_channel()
     assert!(!first_escalation_text.contains(key));
     assert!(!first_escalation_text.contains("CANARY-SENSITIVE-VALUE"));
     assert!(!first_escalation_text.contains("OTHER-SENSITIVE-VALUE"));
+    assert!(!first_escalation_text.contains("CANARY-SENSITIVE-REF-ID"));
+    let first_escalation_rows = first_escalation_text
+        .lines()
+        .map(serde_json::from_str::<Value>)
+        .collect::<Result<Vec<_>, _>>()?;
+    let reference = first_escalation_rows
+        .iter()
+        .flat_map(|row| row["candidate_values"].as_array().unwrap())
+        .find(|candidate| candidate["kind"] == "consumer")
+        .unwrap();
+    assert_eq!(reference["id"]["redacted"], true);
     let first_stdout = String::from_utf8_lossy(&first_output.stdout);
     let first_stderr = String::from_utf8_lossy(&first_output.stderr);
     assert!(!first_stdout.contains(key));
@@ -257,6 +279,7 @@ fn keyed_redaction_is_stable_and_keeps_key_out_of_every_channel()
     ] {
         assert!(!channel.contains("CANARY-SENSITIVE-VALUE"));
         assert!(!channel.contains("OTHER-SENSITIVE-VALUE"));
+        assert!(!channel.contains("CANARY-SENSITIVE-REF-ID"));
     }
     let old_marker_hash = Sha256::digest(br#"{"kind":"scalar","value":"CANARY-SENSITIVE-VALUE"}"#);
     let old_marker_hex = old_marker_hash

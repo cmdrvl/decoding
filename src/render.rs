@@ -4,13 +4,41 @@ use std::collections::BTreeMap;
 use std::io::Write;
 
 use crate::contracts::canon_entry::CanonEntry;
-use crate::contracts::escalation::{CandidateValue, Escalation};
-use crate::contracts::escalation::{ScalarCandidateKind, ScalarCandidateValue};
+use crate::contracts::escalation::{CandidateValue, Escalation, ScalarCandidateKind};
+use crate::contracts::vocabulary::SubjectKind;
 use crate::normalize::canonical_json;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
+
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+enum RedactedCandidate {
+    Scalar {
+        kind: ScalarCandidateKind,
+        value: serde_json::Value,
+    },
+    Ref {
+        kind: SubjectKind,
+        id: serde_json::Value,
+    },
+}
+
+#[derive(serde::Serialize)]
+struct RedactedEscalation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context: Option<crate::contracts::claim::ClaimContext>,
+    event: String,
+    bucket_id: String,
+    subject: crate::contracts::vocabulary::SubjectRef,
+    property_type: crate::contracts::vocabulary::PropertyType,
+    reason: crate::contracts::escalation::EscalationReason,
+    claim_ids: Vec<String>,
+    candidate_values: Vec<RedactedCandidate>,
+    recommended_action: crate::contracts::escalation::RecommendedAction,
+    summary: String,
+}
 
 /// The redaction mode for one emitted escalation output set.
 pub enum RedactionMode {
@@ -53,11 +81,11 @@ impl Redactor {
         matches!(self.mode, RedactionMode::Explicit)
     }
 
-    fn redact_candidate(&mut self, candidate: &CandidateValue) -> CandidateValue {
+    fn redact_candidate(&mut self, candidate: &CandidateValue) -> serde_json::Value {
         let value = serde_json::to_value(candidate).expect("candidate values must be serializable");
         let canonical = canonical_json(&value);
-        let marker = match &self.mode {
-            RedactionMode::Explicit => return candidate.clone(),
+        match &self.mode {
+            RedactionMode::Explicit => unreachable!("explicit output bypasses redaction"),
             RedactionMode::Ordinal => {
                 let reference = match self.ordinals.get(&canonical) {
                     Some(reference) => reference.clone(),
@@ -85,12 +113,7 @@ impl Redactor {
                     "scope": "key",
                 })
             }
-        };
-
-        CandidateValue::Scalar(ScalarCandidateValue {
-            kind: ScalarCandidateKind::Scalar,
-            value: marker,
-        })
+        }
     }
 }
 
@@ -133,14 +156,39 @@ pub fn write_escalation_with_redactor(
     escalation.claim_ids.sort_unstable();
     escalation.candidate_values.sort_by_key(candidate_sort_key);
     if !redactor.is_explicit() {
-        escalation.candidate_values = escalation
+        let redacted_candidates = escalation
             .candidate_values
             .iter()
-            .map(|candidate| redactor.redact_candidate(candidate))
-            .collect();
+            .map(|candidate| {
+                let marker = redactor.redact_candidate(candidate);
+                match candidate {
+                    CandidateValue::Scalar(scalar) => RedactedCandidate::Scalar {
+                        kind: scalar.kind,
+                        value: marker,
+                    },
+                    CandidateValue::Ref(reference) => RedactedCandidate::Ref {
+                        kind: reference.kind,
+                        id: marker,
+                    },
+                }
+            })
+            .collect::<Vec<_>>();
+        let rendered = RedactedEscalation {
+            context: escalation.context,
+            event: escalation.event,
+            bucket_id: escalation.bucket_id,
+            subject: escalation.subject,
+            property_type: escalation.property_type,
+            reason: escalation.reason,
+            claim_ids: escalation.claim_ids,
+            candidate_values: redacted_candidates,
+            recommended_action: escalation.recommended_action,
+            summary: escalation.summary,
+        };
+        serde_json::to_writer(&mut *writer, &rendered)?;
+    } else {
+        serde_json::to_writer(&mut *writer, &escalation)?;
     }
-
-    serde_json::to_writer(&mut *writer, &escalation)?;
     writer.write_all(b"\n")?;
     Ok(())
 }
@@ -336,6 +384,67 @@ mod tests {
         assert!(rendered.contains("\"ref\":\"v1\""));
         assert!(rendered.contains("\"scope\":\"ordinal\""));
         assert!(!rendered.contains("\"sha256\""));
+    }
+
+    #[test]
+    fn redaction_preserves_scalar_and_reference_discriminators() {
+        let escalation = Escalation {
+            context: None,
+            event: "escalation.v0".to_string(),
+            bucket_id: "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+                .to_string(),
+            subject: SubjectRef {
+                kind: SubjectKind::Mapping,
+                id: "redaction.shape.test".to_string(),
+            },
+            property_type: PropertyType::DependsOn,
+            reason: EscalationReason::Conflicted,
+            claim_ids: Vec::new(),
+            candidate_values: vec![
+                CandidateValue::Scalar(ScalarCandidateValue {
+                    kind: ScalarCandidateKind::Scalar,
+                    value: json!("SCALAR-CANARY-VALUE"),
+                }),
+                CandidateValue::Ref(ValueRef {
+                    kind: SubjectKind::Consumer,
+                    id: "REFERENCE-CANARY-ID".to_string(),
+                }),
+            ],
+            recommended_action: RecommendedAction::Review,
+            summary: "two incompatible candidate values remain".to_string(),
+        };
+
+        for mode in [
+            RedactionMode::ordinal(),
+            RedactionMode::keyed(b"0123456789abcdef".to_vec()),
+        ] {
+            let mut output = Vec::new();
+            let mut redactor = Redactor::new(mode);
+            write_escalation_with_redactor(&mut output, &escalation, &mut redactor).unwrap();
+            let rendered: serde_json::Value = serde_json::from_slice(&output).unwrap();
+            let candidates = rendered["candidate_values"].as_array().unwrap();
+
+            let scalar = candidates
+                .iter()
+                .find(|candidate| candidate["kind"] == "scalar")
+                .unwrap();
+            assert_eq!(scalar["value"]["redacted"], true);
+            assert!(!output.starts_with(b"SCALAR-CANARY-VALUE"));
+            assert!(!String::from_utf8_lossy(&output).contains("SCALAR-CANARY-VALUE"));
+
+            let reference = candidates
+                .iter()
+                .find(|candidate| candidate["kind"] == "consumer")
+                .unwrap();
+            assert_eq!(reference["id"]["redacted"], true);
+            assert!(!String::from_utf8_lossy(&output).contains("REFERENCE-CANARY-ID"));
+        }
+
+        let mut explicit_output = Vec::new();
+        write_escalation(&mut explicit_output, &escalation, true).unwrap();
+        let explicit = String::from_utf8(explicit_output).unwrap();
+        assert!(explicit.contains("SCALAR-CANARY-VALUE"));
+        assert!(explicit.contains("\"kind\":\"consumer\",\"id\":\"REFERENCE-CANARY-ID\""));
     }
 
     #[test]

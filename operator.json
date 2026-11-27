@@ -31,7 +31,7 @@
     {"name": "escalations", "flag": "--escalations", "type": "file_path", "output": true, "default": null, "description": "escalation.v0 JSONL destination"},
     {"name": "convergence", "flag": "--convergence", "type": "file_path", "output": true, "default": null, "description": "convergence.v0 JSON summary destination"},
     {"name": "json", "flag": "--json", "type": "flag", "default": false, "description": "JSON status on stderr; archaeology stdout remains canon_entry.v0 JSONL"},
-    {"name": "explicit", "flag": "--explicit", "type": "flag", "default": false, "description": "Emit raw candidate claim values; default emits deterministic ordinal refs or keyed HMAC markers"},
+    {"name": "explicit", "flag": "--explicit", "type": "flag", "default": false, "description": "Emit raw candidate claim values; default preserves each fixed kind and redacts only scalar value or reference id with deterministic ordinal refs or keyed HMAC markers"},
     {"name": "describe", "flag": "--describe", "type": "flag", "default": false, "description": "Emit this embedded manifest verbatim without inputs"},
     {"name": "schema", "flag": "--schema", "type": "flag", "default": false, "description": "Emit JSON Schema for each canonical stdout record without inputs"},
     {"name": "robot_triage", "flag": "--robot-triage", "type": "flag", "default": false, "description": "Deprecated alias for doctor triage --json"}
@@ -49,7 +49,7 @@
         {"name": "escalations", "flag": "--escalations", "type": "file_path", "output": true, "default": null},
         {"name": "convergence", "flag": "--convergence", "type": "file_path", "output": true, "default": null},
         {"name": "json", "flag": "--json", "type": "flag", "default": false},
-        {"name": "explicit", "flag": "--explicit", "type": "flag", "default": false, "description": "Emit raw candidate claim values; default emits deterministic ordinal refs or keyed HMAC markers"}
+        {"name": "explicit", "flag": "--explicit", "type": "flag", "default": false, "description": "Emit raw candidate claim values; default preserves each fixed kind and redacts only scalar value or reference id with deterministic ordinal refs or keyed HMAC markers"}
       ],
       "output_schema": "canon_entry.v0",
       "status_stream": "stderr",
