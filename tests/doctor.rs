@@ -48,6 +48,43 @@ fn doctor_capabilities_json_describes_contracts() -> Result<(), Box<dyn std::err
     assert_eq!(report["mode"], "capabilities");
     assert_eq!(report["contract"]["schema_version"], "operator.v1");
     assert_eq!(report["contract"]["name"], "decoding");
+    assert_eq!(
+        report["core_command"]["command"],
+        "decoding archaeology <CLAIMS>... --policy <FILE>"
+    );
+    assert_eq!(report["core_command"]["input_contract"], "claim.v0");
+    assert_eq!(
+        report["core_command"]["policy_contract"],
+        "legacy.decode.v0"
+    );
+    assert_eq!(
+        report["core_command"]["output_contracts"],
+        serde_json::json!(["canon_entry.v0", "escalation.v0", "convergence.v0"])
+    );
+    assert_eq!(
+        report["core_command"]["claim_features"]["exact_context_bucketing"],
+        true
+    );
+    assert_eq!(
+        report["core_command"]["claim_features"]["source_ancestry_components"],
+        true
+    );
+    assert_eq!(
+        report["core_command"]["claim_features"]["unknown_ancestry_independence_credit"],
+        false
+    );
+    assert_eq!(
+        report["core_command"]["claim_features"]["exact_decimal_arithmetic"],
+        true
+    );
+    assert_eq!(
+        report["core_command"]["claim_features"]["decimal_limits"],
+        serde_json::json!({
+            "significant_digits": 1024,
+            "normalized_absolute_scale": 1024,
+            "json_token_bytes": 4096,
+        })
+    );
     Ok(())
 }
 

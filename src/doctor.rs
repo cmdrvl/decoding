@@ -2,7 +2,7 @@
 
 use std::io::{self, IsTerminal, Write};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use spine_rules::contract::OperatorContract;
 use spine_rules::doctor::{DoctorMode, DoctorReport, Finding, Severity};
 
@@ -25,7 +25,7 @@ pub fn execute(args: &DoctorArgs) -> Result<Outcome, Box<dyn std::error::Error>>
         }
         Some(DoctorCommand::Capabilities(output)) => {
             if output.json {
-                return write_report(capabilities_report());
+                return write_capabilities_report();
             } else {
                 write_human_capabilities()?;
             }
@@ -54,6 +54,26 @@ fn write_report(report: DoctorReport) -> Result<Outcome, Box<dyn std::error::Err
     serde_json::to_writer_pretty(&mut handle, &report)?;
     handle.write_all(b"\n")?;
     Ok(if report.healthy {
+        Outcome::Clean
+    } else {
+        Outcome::Escalations
+    })
+}
+
+fn write_capabilities_report() -> Result<Outcome, Box<dyn std::error::Error>> {
+    let report = capabilities_report();
+    let healthy = report.healthy;
+    let mut document = serde_json::to_value(&report)?;
+    document
+        .as_object_mut()
+        .expect("doctor report serializes as an object")
+        .insert("core_command".to_owned(), core_command_capabilities());
+
+    let stdout = io::stdout();
+    let mut handle = stdout.lock();
+    serde_json::to_writer_pretty(&mut handle, &document)?;
+    handle.write_all(b"\n")?;
+    Ok(if healthy {
         Outcome::Clean
     } else {
         Outcome::Escalations
@@ -296,6 +316,31 @@ fn capabilities_report() -> DoctorReport {
         contract: Some(operator_contract()),
         next_actions: None,
     }
+}
+
+fn core_command_capabilities() -> Value {
+    json!({
+        "command": "decoding archaeology <CLAIMS>... --policy <FILE>",
+        "input_contract": "claim.v0",
+        "claim_features": {
+            "exact_context_bucketing": true,
+            "source_ancestry_components": true,
+            "unknown_ancestry_independence_credit": false,
+            "exact_decimal_arithmetic": true,
+            "decimal_limits": {
+                "significant_digits": crate::numeric::MAX_DECIMAL_DIGITS,
+                "normalized_absolute_scale": crate::numeric::MAX_DECIMAL_SCALE,
+                "json_token_bytes": 4096,
+            },
+        },
+        "policy_contract": "legacy.decode.v0",
+        "output_contracts": ["canon_entry.v0", "escalation.v0", "convergence.v0"],
+        "exit_codes": {
+            "0": "all claims converged or resolved",
+            "1": "escalations emitted",
+            "2": "refusal, invalid policy, contract violation, or operational error",
+        },
+    })
 }
 
 fn triage_report() -> DoctorReport {
